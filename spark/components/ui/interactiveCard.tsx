@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import AddToPartyDialog from "@/components/ui/AddToPartyDialog";
 
 /* =============== Local types (structural; no imports needed) =============== */
 type Palette = {
@@ -191,6 +192,8 @@ export function InteractiveCard({
     ]).start();
   };
   const [burst, setBurst] = useState(0);
+  const [showDialog, setShowDialog] = useState(false);
+
 
   return (
     <Animated.View style={{ marginBottom:26, transform:[{ translateY: enterT }], opacity: enter }}>
@@ -279,7 +282,7 @@ export function InteractiveCard({
                 >
                   <TouchableOpacity
                     activeOpacity={0.92}
-                    onPress={()=>{ setBurst(b=>b+1); haptic("medium"); triggerRipple(); }}
+                    onPress={()=>{ setBurst(b=>b+1); haptic("medium"); triggerRipple(); setShowDialog(true); }}
                     style={{
                       paddingHorizontal:16, paddingVertical:12, borderRadius:12, overflow:"hidden",
                       borderWidth:1, borderColor:`${accent}AA`, backgroundColor:`${accent}26`,
@@ -315,6 +318,15 @@ export function InteractiveCard({
       <LinearGradient colors={["transparent", `${accent}33`, "transparent"]}
         start={{x:0,y:0}} end={{x:1,y:0}}
         style={{ position:"absolute", left:28, right:28, bottom:-10, height:16, borderRadius:12, opacity:0.8 }}/>
+        <AddToPartyDialog
+          visible={showDialog}
+          onClose={() => setShowDialog(false)}
+          P={P}
+          onAdded={(partyId) => {
+            // optional: perform your backend action to attach this suggestion to the party
+            // e.g., await addSuggestionToParty(partyId, s.id)
+          }}
+        />
     </Animated.View>
   );
 }
