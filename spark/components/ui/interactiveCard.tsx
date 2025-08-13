@@ -322,9 +322,18 @@ export function InteractiveCard({
           visible={showDialog}
           onClose={() => setShowDialog(false)}
           P={P}
-          onAdded={(partyId) => {
-            // optional: perform your backend action to attach this suggestion to the party
-            // e.g., await addSuggestionToParty(partyId, s.id)
+          suggestion={{
+            id: s.id,
+            title: s.title,
+            desc: s.desc,
+            location: s.location,
+            minutes: s.minutes,
+            tags: s.tags,
+            hero: s.hero,
+          }}
+          onAdded={(partyId, res) => {
+            // optional: log/analytics, toast, etc.
+            // res.status === 'exists' | 'created'
           }}
         />
     </Animated.View>

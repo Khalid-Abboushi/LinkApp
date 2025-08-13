@@ -40,7 +40,6 @@ export function useChatRealtime(chatId: string | null, handlers: Handlers) {
         { event: "DELETE", schema: "public", table: "messages", filter: `chat_id=eq.${chatId}` }, onDel);
 
       ch.subscribe((status) => {
-        console.log("🔌 messages channel:", status);
         if (status === "SUBSCRIBED") backoffRef.current = 500;
 
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {

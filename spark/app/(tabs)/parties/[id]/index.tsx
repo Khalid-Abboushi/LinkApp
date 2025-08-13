@@ -14,6 +14,7 @@ import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "@/lib/supabase";
 import PartyChat, { type AvatarMap, type NameMap } from "@/components/PartyChat";
+import PartyDetails from "@/components/party/PartyDetails";
 
 import {
   type PartyRow,
@@ -27,6 +28,9 @@ import {
 } from "@/data/partyRoom";
 import { useChatRealtime } from "@/hooks/useChatRealtime";
 import TopTabs, { type TabKey } from "@/components/TopTabs";
+import PartyEvents from "@/components/party/PartyEvents";
+import PartyEventsLive from "@/components/party/PartyEventsLive";
+import { DEFAULT_PALETTE } from "@/components/party/PartyDetails";
 
 /* ======= Dark (lighter) Palettes with brand names ======= */
 type AppPalette = {
@@ -326,22 +330,16 @@ export default function PartyRoom() {
                 }}
               >
                 <Text style={{ color: P.text, fontWeight: "700", marginBottom: 8 }}>Details</Text>
-                <Text style={{ color: P.textMuted }}>Coming soon.</Text>
+                {party && <PartyDetails partyId={party.id} P={DEFAULT_PALETTE} />}
               </View>
             )}
             {tab === "events" && (
-              <View
-                style={{
-                  backgroundColor: P.surface,
-                  borderColor: P.border,
-                  borderWidth: 1,
-                  borderRadius: 12,
-                  marginTop: 12,
-                  padding: 16,
-                  alignSelf: "stretch",
-                }}
-              >
-                <Text style={{ color: P.textMuted }}>Events coming soon.</Text>
+              <View style={{ backgroundColor: P.surface, borderColor: P.border, borderWidth: 1, borderRadius: 12, marginTop: 12, padding: 16, alignSelf: "stretch" }}>
+                {party ? (
+                  <PartyEventsLive partyId={party.id} P={P} />
+                ) : (
+                  <Text style={{ color: P.textMuted }}>Loading party…</Text>
+                )}
               </View>
             )}
             {tab === "polls" && (

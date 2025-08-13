@@ -17,6 +17,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { fetchMyParties } from "@/data/parties";
+import { addSuggestionToParty } from "@/data/events";
 
 /* ===== Shared palette type (matches Discover) ===== */
 type Palette = {
@@ -30,10 +31,16 @@ type Palette = {
   p1: string; p2: string; p3: string; p4: string;
 };
 
-type PartyRow = {
+type PartyRow = { id: string; name: string; picture_url?: string | null };
+
+type SuggestionLike = {
   id: string;
-  name: string;
-  picture_url?: string | null;
+  title: string;
+  desc?: string;
+  location?: string;
+  minutes?: number;
+  tags?: string[];
+  hero?: string;
 };
 
 const fontHeavy = Platform.select({ ios: "Avenir-Heavy", android: "sans-serif-condensed", default: "system-ui" });
@@ -49,11 +56,11 @@ const FULLSCREEN: any =
    Wide shimmering party row
    ========================= */
 function PartyPickRow({
-  p, P, disabled, onAdd,
+  p, P, state, onAdd,
 }:{
   p: PartyRow;
   P: Palette;
-  disabled: boolean;
+  state: "idle" | "loading" | "added" | "exists" | "error";
   onAdd: () => void;
 }) {
   const w = Math.min(Dimensions.get("window").width - 40, 740);
@@ -82,10 +89,11 @@ function PartyPickRow({
       : undefined;
 
   const hasImg = !!p.picture_url;
-  // cool-blue tint derived from theme, slightly stronger on the left where text sits
-  const blueLeft = `${P.p2}44`;     // ~26% opacity
+  const blueLeft = `${P.p2}44`;
   const blueMid  = "rgba(12, 22, 55, 0.28)";
   const blueDeep = "rgba(6, 12, 28, 0.55)";
+
+  const disabled = state === "loading" || state === "added" || state === "exists";
 
   return (
     <View
@@ -95,7 +103,7 @@ function PartyPickRow({
         borderRadius: R,
         overflow: "hidden",
         marginBottom: 12,
-        backgroundColor: P.bg2,          // helps RNW clip reliably
+        backgroundColor: P.bg2,
         borderWidth: 1,
         borderColor: P.glassBorder,
       }}
@@ -110,31 +118,28 @@ function PartyPickRow({
       <ImageBackground
         source={hasImg ? { uri: p.picture_url! } : undefined}
         style={[{ flex: 1, flexDirection: "row" }, clipRoundWeb]}
-        imageStyle={{ borderRadius: R }}   // iOS/Android
+        imageStyle={{ borderRadius: R }}
       >
-        {/* left gradient stripe */}
+        {/* top stripe */}
         <LinearGradient
           colors={[`${P.p2}66`, "transparent"]}
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
           style={{ position: "absolute", top: 0, left: 0, right: 0, height: 6 }}
         />
 
-        {/* ★ legibility overlays (only if image exists) */}
+        {/* legibility overlays */}
         {hasImg && (
           <>
-            {/* left cool-blue scrim under text */}
             <LinearGradient
               colors={[blueLeft, blueMid, "transparent"]}
               start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }}
               style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "70%" }}
             />
-            {/* bottom vignette for extra contrast */}
             <LinearGradient
               colors={["transparent", "rgba(0,0,0,0.45)"]}
               start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
               style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "65%" }}
             />
-            {/* right ramp behind ADD button */}
             <LinearGradient
               colors={["transparent", blueDeep]}
               start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }}
@@ -143,7 +148,7 @@ function PartyPickRow({
           </>
         )}
 
-        {/* sheen (clipped by wrapper) */}
+        {/* sheen */}
         <Animated.View style={{ position: "absolute", top: 0, bottom: 0, width: 90, transform: [{ translateX }] }}>
           <LinearGradient
             colors={["transparent", "rgba(255,255,255,0.22)", "transparent"]}
@@ -162,7 +167,6 @@ function PartyPickRow({
                 fontSize: 16,
                 fontFamily: fontHeavy,
                 letterSpacing: 0.2,
-                // soft halo for readability on busy photos
                 textShadowColor: "rgba(0,0,0,0.55)",
                 textShadowRadius: 6,
                 textShadowOffset: { width: 0, height: 1 },
@@ -191,14 +195,35 @@ function PartyPickRow({
             onPress={disabled ? undefined : onAdd}
             style={{
               paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
-              borderWidth: 1, borderColor: disabled ? "rgba(255,255,255,0.18)" : `${P.p1}AA`,
-              backgroundColor: disabled ? "rgba(255,255,255,0.06)" : `${P.p1}26`,
+              borderWidth: 1,
+              borderColor:
+                state === "exists"
+                  ? "rgba(255,255,255,0.18)"
+                  : state === "added"
+                  ? `${P.p1}AA`
+                  : `${P.p1}AA`,
+              backgroundColor:
+                state === "loading"
+                  ? "rgba(255,255,255,0.08)"
+                  : state === "exists"
+                  ? "rgba(255,255,255,0.06)"
+                  : `${P.p1}26`,
               flexDirection: "row", alignItems: "center", gap: 6,
               opacity: disabled ? 0.86 : 1,
             }}
           >
-            <Ionicons name={disabled ? "checkmark-circle" : "add"} size={18} color={disabled ? "#9BE7C4" : "#F6F9FF"} />
-            <Text style={{ color: "#F6F9FF", fontFamily: fontHeavy }}> {disabled ? "ADDED" : "ADD"} </Text>
+            {state === "loading" ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Ionicons
+                name={state === "exists" ? "alert-circle" : state === "added" ? "checkmark-circle" : "add"}
+                size={18}
+                color={"#F6F9FF"}
+              />
+            )}
+            <Text style={{ color: "#F6F9FF", fontFamily: fontHeavy }}>
+              {state === "exists" ? "ALREADY ADDED" : state === "added" ? "ADDED" : state === "loading" ? "ADDING…" : "ADD"}
+            </Text>
           </TouchableOpacity>
         </View>
       </ImageBackground>
@@ -213,16 +238,20 @@ export default function AddToPartyDialog({
   visible,
   onClose,
   P,
+  suggestion,
   onAdded,
 }:{
   visible: boolean;
   onClose: () => void;
   P: Palette;
-  onAdded?: (partyId: string) => void;
+  suggestion: SuggestionLike;
+  onAdded?: (partyId: string, result: { status: "created" | "exists"; eventId: string }) => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [parties, setParties] = useState<PartyRow[]>([]);
-  const [added, setAdded] = useState<Record<string, boolean>>({}); // click-once lock
+
+  // per-party UI state
+  const [rowState, setRowState] = useState<Record<string, "idle" | "loading" | "added" | "exists" | "error">>({});
 
   // lock page scroll on web while dialog is open
   useEffect(() => {
@@ -230,9 +259,7 @@ export default function AddToPartyDialog({
     const body = document?.body as HTMLBodyElement | undefined;
     const prev = body?.style.overflow;
     if (visible && body) body.style.overflow = "hidden";
-    return () => {
-      if (body) body.style.overflow = prev ?? "";
-    };
+    return () => { if (body) body.style.overflow = prev ?? ""; };
   }, [visible]);
 
   // load parties when dialog opens
@@ -244,15 +271,32 @@ export default function AddToPartyDialog({
       try {
         const data = await fetchMyParties();
         if (!alive) return;
-        setParties(
-          data.map((p) => ({ id: p.id, name: p.name, picture_url: p.picture_url ?? undefined }))
-        );
+        const rows = data.map((p) => ({ id: p.id, name: p.name, picture_url: p.picture_url ?? undefined }));
+        setParties(rows);
+        // reset row states for fresh open
+        const init: Record<string, "idle"> = {} as any;
+        rows.forEach((r) => (init[r.id] = "idle"));
+        setRowState(init);
       } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => { alive = false; };
   }, [visible]);
+
+  async function handleAdd(partyId: string) {
+    setRowState((s) => ({ ...s, [partyId]: "loading" }));
+    try {
+      const res = await addSuggestionToParty(partyId, suggestion);
+      setRowState((s) => ({ ...s, [partyId]: res.status === "exists" ? "exists" : "added" }));
+      onAdded?.(partyId, res);
+    } catch (e) {
+      setRowState((s) => ({ ...s, [partyId]: "error" }));
+      // Optional: surface a toast/snackbar if you have one
+      console.warn("addSuggestionToParty failed", e);
+      setTimeout(() => setRowState((s) => ({ ...s, [partyId]: "idle" })), 1600);
+    }
+  }
 
   return (
     <Modal
@@ -264,23 +308,13 @@ export default function AddToPartyDialog({
     >
       {/* Fullscreen/backdrop (fixed on web) */}
       <View style={[FULLSCREEN, { zIndex: 9999 }]}>
-        {/* Blur layer */}
+        {/* Blur + dim */}
         <BlurView intensity={55} tint="dark" style={[FULLSCREEN]} />
-
-        {/* Dim layer for extra contrast */}
         <View style={[FULLSCREEN, { backgroundColor: "rgba(0,0,0,0.35)" }]} />
-
         {/* Click outside to close */}
         <TouchableOpacity activeOpacity={1} onPress={onClose} style={FULLSCREEN} />
-
         {/* Centered sheet */}
-        <View
-          pointerEvents="box-none"
-          style={[
-            FULLSCREEN,
-            { justifyContent: "center", alignItems: "center", padding: 20 },
-          ]}
-        >
+        <View pointerEvents="box-none" style={[FULLSCREEN, { justifyContent: "center", alignItems: "center", padding: 20 }]}>
           <View
             style={{
               width: Math.min(Dimensions.get("window").width - 20, 780),
@@ -299,15 +333,13 @@ export default function AddToPartyDialog({
                 paddingVertical: 12,
                 borderBottomWidth: 1,
                 borderColor: P.glassBorder,
-                backgroundColor: P.bg2, // ensure solid header
+                backgroundColor: P.bg2,
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "space-between",
               }}
             >
-              <Text style={{ color: P.text, fontSize: 16, fontFamily: fontHeavy }}>
-                Add to a party
-              </Text>
+              <Text style={{ color: P.text, fontSize: 16, fontFamily: fontHeavy }}>Add to a party</Text>
               <TouchableOpacity onPress={onClose} style={{ padding: 6 }}>
                 <Ionicons name="close" size={18} color={P.textMuted} />
               </TouchableOpacity>
@@ -347,11 +379,8 @@ export default function AddToPartyDialog({
                     key={p.id}
                     p={p}
                     P={P}
-                    disabled={!!added[p.id]}
-                    onAdd={() => {
-                      setAdded((m) => ({ ...m, [p.id]: true }));
-                      onAdded?.(p.id);
-                    }}
+                    state={rowState[p.id] ?? "idle"}
+                    onAdd={() => handleAdd(p.id)}
                   />
                 ))}
               </ScrollView>

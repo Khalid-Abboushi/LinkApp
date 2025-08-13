@@ -29,6 +29,17 @@ type Mode = "signin" | "signup" | "forgot";
 const heroDesktop = require("@/assets/images/spark-hero-desktop.png");
 const heroMobile = require("@/assets/images/spark-hero-mobile.png");
 
+
+useEffect(() => {
+  supabase.auth.getSession().then(({ data }) => {
+    supabase.realtime.setAuth(data.session?.access_token ?? "");
+  });
+  const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+    supabase.realtime.setAuth(session?.access_token ?? "");
+  });
+  return () => sub?.subscription?.unsubscribe?.();
+}, []);
+
 /* =========================
    Helpers (derive + availability)
    ========================= */
