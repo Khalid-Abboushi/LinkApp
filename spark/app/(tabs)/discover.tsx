@@ -18,6 +18,8 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
+import InteractiveCard from "@/components/ui/interactiveCard";
+
 
 /* =========================
    THEME — palettes
@@ -369,200 +371,6 @@ const PreviewOverlay = ({
 };
 
 /* =========================
-   INTERACTIVE PRISM CARD
-   ========================= */
-const InteractiveCard = ({
-  s, P, idx, onSave, saved, onPreview,
-}:{
-  s: Suggestion; P: Palette; idx:number; onSave: () => void; saved:boolean; onPreview: (s:Suggestion)=>void;
-})=>{
-  const accent = pickAccent(s.hero, P);
-
-  // entrance
-  const enter = useRef(new Animated.Value(0)).current;
-  React.useEffect(()=>{
-    Animated.sequence([ Animated.delay(idx*70), Animated.timing(enter,{toValue:1,duration:420,easing:Easing.out(Easing.cubic),useNativeDriver:true}) ]).start();
-  },[]); // eslint-disable-line
-  const enterT = enter.interpolate({ inputRange:[0,1], outputRange:[16,0] });
-
-  // tilt + hotspot
-  const rotX = useRef(new Animated.Value(0)).current;
-  const rotY = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(1)).current;
-  const spotX = useRef(new Animated.Value(0)).current;
-  const spotY = useRef(new Animated.Value(0)).current;
-  const cardW = useRef(1); const cardH = useRef(1);
-  const maxTilt = 8;
-
-  const onCardLayout = (e:LayoutChangeEvent)=>{ cardW.current = e.nativeEvent.layout.width; cardH.current = e.nativeEvent.layout.height; };
-  const toTilt = (x:number,y:number)=>{
-    const cx = cardW.current/2, cy = cardH.current/2;
-    const dx = (x - cx) / cx; const dy = (y - cy) / cy;
-    rotY.setValue(-dx * maxTilt);
-    rotX.setValue(dy * maxTilt);
-    spotX.setValue(x - 60);
-    spotY.setValue(y - 60);
-  };
-  const onCardMove = (e:GestureResponderEvent)=>{ const {locationX, locationY} = e.nativeEvent; toTilt(locationX, locationY); pullCTA(locationX, locationY); };
-  const onCardDown = (e:GestureResponderEvent)=>{ haptic("light"); Animated.spring(scale,{toValue:0.985,useNativeDriver:true,friction:7,tension:120}).start(); onCardMove(e); };
-  const onCardUp = ()=>{ Animated.parallel([
-    Animated.spring(scale,{toValue:1,useNativeDriver:true,friction:6,tension:120}),
-    Animated.timing(rotX,{toValue:0,duration:180,easing:Easing.out(Easing.quad),useNativeDriver:true}),
-    Animated.timing(rotY,{toValue:0,duration:180,easing:Easing.out(Easing.quad),useNativeDriver:true}),
-  ]).start(); };
-
-  // magnetic CTA + confetti origin handled inside CTA wrapper
-  const ctaTx = useRef(new Animated.Value(0)).current;
-  const ctaTy = useRef(new Animated.Value(0)).current;
-  const ctaScale = useRef(new Animated.Value(1)).current;
-  const ctaBox = useRef({ x:0, y:0, w:0, h:0 });
-
-  const onCtaLayout = (e:LayoutChangeEvent)=>{
-    const { x, y, width, height } = e.nativeEvent.layout;
-    ctaBox.current = { x, y, w: width, h: height };
-  };
-  const pullCTA = (x:number,y:number)=>{
-    const { x:bx, y:by, w, h } = ctaBox.current;
-    const cx = bx + w/2, cy = by + h/2;
-    const dx = x - cx, dy = y - cy;
-    const dist = Math.hypot(dx, dy);
-    const threshold = 140;
-    const within = dist < threshold;
-    const factor = within ? 0.12 : 0;
-    Animated.spring(ctaTx,{ toValue: dx*factor, useNativeDriver:true, friction:7, tension:120 }).start();
-    Animated.spring(ctaTy,{ toValue: dy*factor, useNativeDriver:true, friction:7, tension:120 }).start();
-    Animated.spring(ctaScale,{ toValue: within?1.06:1, useNativeDriver:true, friction:7, tension:120 }).start();
-  };
-
-  // ripple + confetti
-  const rippleS = useRef(new Animated.Value(0)).current;
-  const rippleO = useRef(new Animated.Value(0)).current;
-  const triggerRipple = ()=>{
-    rippleS.setValue(0); rippleO.setValue(0.35);
-    Animated.parallel([
-      Animated.timing(rippleS,{toValue:1,duration:520,easing:Easing.out(Easing.quad),useNativeDriver:true}),
-      Animated.timing(rippleO,{toValue:0,duration:520,easing:Easing.inOut(Easing.quad),useNativeDriver:true}),
-    ]).start();
-  };
-  const [burst, setBurst] = useState(0);
-
-  return (
-    <Animated.View style={{ marginBottom:26, transform:[{ translateY: enterT }], opacity: enter }}>
-      <View style={{ borderRadius:22, padding:1.2, overflow:"hidden" }}>
-        <LinearGradient colors={["rgba(255,255,255,0.06)","rgba(255,255,255,0.02)"]} start={{x:0,y:0}} end={{x:1,y:1}} style={{ borderRadius:22, padding:1.2 }}>
-          <Animated.View
-            onLayout={onCardLayout}
-            onStartShouldSetResponder={() => true}
-            onMoveShouldSetResponder={() => true}
-            onResponderGrant={onCardDown}
-            onResponderMove={onCardMove}
-            onResponderRelease={onCardUp}
-            style={{
-              borderRadius:20, overflow:"hidden", backgroundColor:P.bg2,
-              borderWidth:1, borderColor:P.glassBorder,
-              transform:[
-                { perspective: 800 },
-                { rotateX: rotX.interpolate({inputRange:[-15,15],outputRange:["-15deg","15deg"]}) },
-                { rotateY: rotY.interpolate({inputRange:[-15,15],outputRange:["-15deg","15deg"]}) },
-                { scale },
-              ],
-            }}
-          >
-            {/* hero (long press to preview) */}
-            <Pressable onLongPress={()=>{ haptic("medium"); onPreview(s); }}>
-              <ImageBackground source={{ uri: s.hero }} style={{ height:220 }}>
-                <View style={{ position:"absolute", top:14, left:-60, transform:[{ rotate:"-18deg" }] }}>
-                  <LinearGradient colors={[accent, `${accent}66`]} start={{x:0,y:0}} end={{x:1,y:0}}
-                    style={{ width:180, height:10, borderRadius:999 }} />
-                </View>
-                <LinearGradient colors={[`${accent}85`,"transparent"]} start={{x:0,y:0}} end={{x:1,y:0}}
-                  style={{ position:"absolute", top:0, left:0, right:0, height:8 }} />
-                <LinearGradient colors={["rgba(0,0,0,0)","rgba(0,0,0,0.45)","rgba(0,0,0,0.86)"]}
-                  start={{x:0.5,y:0}} end={{x:0.5,y:1}}
-                  style={{ position:"absolute", bottom:0, left:0, right:0, height:140 }} />
-              </ImageBackground>
-            </Pressable>
-
-            {/* moving light hotspot */}
-            <Animated.View pointerEvents="none" style={{
-              position:"absolute", width:120, height:120, borderRadius:120, backgroundColor: `${accent}22`,
-              transform:[ { translateX: spotX }, { translateY: spotY } ],
-              shadowColor: accent, shadowOpacity: 0.55, shadowRadius: 28, shadowOffset:{ width:0, height:0 },
-            }}/>
-
-            {/* body */}
-            <View style={{ padding:16 }}>
-              <Text style={{ color:P.text, fontSize:18, fontFamily:fontHeavy, letterSpacing:0.3 }}>{s.title}</Text>
-              <Text style={{ color:P.textMuted, fontSize:13, lineHeight:19, marginTop:6, fontFamily:fontSans }}>{s.desc}</Text>
-
-              <View style={{ flexDirection:"row", gap:14, marginTop:8 }}>
-                <Text style={{ color:P.textMuted, fontSize:12, fontFamily:fontSans }}>⏱ {s.minutes}m</Text>
-                <Text style={{ color:P.textMuted, fontSize:12, fontFamily:fontSans }}>👥 {s.group}</Text>
-                <Text style={{ color:P.textMuted, fontSize:12, fontFamily:fontSans }}>📍 {s.location}</Text>
-              </View>
-
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop:10 }}>
-                {s.tags.map((t,i)=>(
-                  <Chip key={t} label={t} color={accent} active={false} mr={i===s.tags.length-1?0:8}/>
-                ))}
-              </ScrollView>
-
-              <View style={{ flexDirection:"row", justifyContent:"space-between", marginTop:14 }}>
-                <TouchableOpacity onPress={()=>{ onSave(); haptic("light"); }} style={{ padding:6 }}>
-                  <Ionicons name={saved ? "heart" : "heart-outline"} size={22} color={P.p3}/>
-                </TouchableOpacity>
-
-                {/* CTA wrapper now hosts confetti and shares transforms */}
-                <Animated.View
-                  onLayout={onCtaLayout}
-                  style={{
-                    position:"relative",
-                    transform:[{ translateX: ctaTx }, { translateY: ctaTy }, { scale: ctaScale }],
-                  }}
-                >
-                  <TouchableOpacity
-                    activeOpacity={0.92}
-                    onPress={()=>{ setBurst(b=>b+1); haptic("medium"); triggerRipple(); }}
-                    style={{
-                      paddingHorizontal:16, paddingVertical:12, borderRadius:12, overflow:"hidden",
-                      borderWidth:1, borderColor:`${accent}AA`, backgroundColor:`${accent}26`,
-                      shadowColor: accent, shadowOpacity:0.35, shadowRadius:12, shadowOffset:{ width:0, height:4 },
-                    }}
-                  >
-                    <Text style={{ color:"#F6F9FF", fontFamily:fontHeavy, letterSpacing:0.2 }}>Add to party</Text>
-                    {/* ripple from center */}
-                    <Animated.View pointerEvents="none" style={{
-                      position:"absolute", left:0, right:0, top:0, bottom:0,
-                      alignItems:"center", justifyContent:"center",
-                      opacity: rippleO,
-                      transform:[ { scale: rippleS.interpolate({inputRange:[0,1],outputRange:[0.6,1.8]}) } ],
-                    }}>
-                      <View style={{ width:120, height:120, borderRadius:120, backgroundColor:`${accent}33` }}/>
-                    </Animated.View>
-                  </TouchableOpacity>
-
-                  {/* 🎯 Confetti now truly erupts from the CTA center */}
-                  <LocalConfetti
-                    trigger={burst}
-                    colors={[accent, P.p1, P.p2, P.p3, "#fff"]}
-                    origin={{ x: ctaBox.current.w/2, y: ctaBox.current.h/2 }}
-                  />
-                </Animated.View>
-              </View>
-            </View>
-          </Animated.View>
-        </LinearGradient>
-      </View>
-
-      {/* ground glow */}
-      <LinearGradient colors={["transparent", `${accent}33`, "transparent"]}
-        start={{x:0,y:0}} end={{x:1,y:0}}
-        style={{ position:"absolute", left:28, right:28, bottom:-10, height:16, borderRadius:12, opacity:0.8 }}/>
-    </Animated.View>
-  );
-};
-
-/* =========================
    PAGE
    ========================= */
 export default function Discover(){
@@ -764,7 +572,10 @@ export default function Discover(){
           {filtered.length ? (
             filtered.map((item,i)=>(
               <InteractiveCard
-                key={item.id} s={item} P={P} idx={i}
+                key={item.id}
+                s={item}
+                P={P}
+                idx={i}
                 saved={!!saved[item.id]}
                 onSave={()=> setSaved(p=>({ ...p, [item.id]: !p[item.id] }))}
                 onPreview={(s)=> setPreview(s)}
