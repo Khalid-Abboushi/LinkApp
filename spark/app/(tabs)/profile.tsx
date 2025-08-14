@@ -27,6 +27,7 @@ import {
   declineFriendRequest,
 } from "@/lib/friends";
 import PartyInvitesPanel from "@/components/profile/PartyInvitesPanel";
+import { uploadImageToPartyPics } from "@/data/uploadImage";
 
 /* ======= Theme palettes (same as Parties) ======= */
 type AppPalette = {
@@ -250,40 +251,40 @@ export default function Profile() {
   /* ========= avatar upload ========= */
   const changeAvatar = async () => {
     if (!user?.id) return;
+    
+    // Ask for photos permission
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== "granted") return;
-
+    
+    // Let user pick & crop to square
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.9,
+      quality: 1,
     });
     if (res.canceled || !res.assets?.length) return;
-
+  
     setSaving(true);
     try {
-      const asset = res.assets[0];
-      const mime = (asset as any).mimeType || (asset.uri?.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg");
-      const ext = mime.split("/")[1] || "jpg";
-      const filePath = `${AVATAR_PREFIX}/${user.id}/${Date.now()}.${ext}`;
-      const resp = await fetch(asset.uri);
-      const blob = await resp.blob();
-
-      const { error: upErr } = await supabase.storage.from(AVATAR_BUCKET).upload(filePath, blob, { contentType: mime, upsert: true });
-      if (upErr) {
-        Alert.alert("Upload failed", upErr.message);
-        return;
-      }
-      const { data: pub } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(filePath);
-      const url = pub.publicUrl;
-      if (url) {
-        await updateField({ avatar_url: url });
-        setAvatarBust(Date.now());
-        setImgReady(false);
-      }
+      const a = res.assets[0];
+    
+      // ✅ Mobile-safe upload (re-encodes to real JPEG and uploads as ArrayBuffer)
+      const url = await uploadImageToPartyPics({
+        uri: a.uri,
+        name: (a as any).name ?? (a as any).fileName ?? null,
+        fileName: (a as any).fileName ?? null,
+        type: (a as any).type ?? null,
+        mimeType: (a as any).mimeType ?? null,
+      });
+    
+      // Save on profile and refresh the <Image>
+      await updateField({ avatar_url: url });
+      setAvatarBust(Date.now()); // cache-bust
+      setImgReady(false);
     } catch (e: any) {
-      Alert.alert("Upload error", e?.message || String(e));
+      console.log("avatar upload error:", e?.message || e);
+      Alert.alert("Upload error", e?.message ?? String(e));
     } finally {
       setSaving(false);
     }
