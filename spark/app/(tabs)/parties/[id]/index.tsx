@@ -30,7 +30,6 @@ import { useChatRealtime } from "@/hooks/useChatRealtime";
 import TopTabs, { type TabKey } from "@/components/TopTabs";
 import PartyEvents from "@/components/party/PartyEvents";
 import PartyEventsLive from "@/components/party/PartyEventsLive";
-import { DEFAULT_PALETTE } from "@/components/party/PartyDetails";
 
 /* ======= Dark (lighter) Palettes with brand names ======= */
 type AppPalette = {
@@ -330,7 +329,7 @@ export default function PartyRoom() {
                 }}
               >
                 <Text style={{ color: P.text, fontWeight: "700", marginBottom: 8 }}>Details</Text>
-                {party && <PartyDetails partyId={party.id} P={DEFAULT_PALETTE} />}
+                {party && <PartyDetails partyId={party.id} appPalette={P} />}
               </View>
             )}
             {tab === "events" && (
