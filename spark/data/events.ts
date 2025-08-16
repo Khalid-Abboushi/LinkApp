@@ -9,20 +9,19 @@ export type SuggestionLike = {
   location?: string;
   minutes?: number;
   tags?: string[];
-  hero?: string | null; // NEW: will be saved to events.hero_url
+  hero?: string | null; // saved to events.hero_url
 };
 
 /**
  * Idempotent add: if an event with same (party_id, name, description) exists,
- * we return {status:'exists'}. Otherwise insert and return {status:'created'}.
+ * return {status:'exists'}. Otherwise insert and return {status:'created'}.
  * Also best-effort inserts tags into `event_tags` if present.
  */
 export async function addSuggestionToParty(
   partyId: string,
   s: SuggestionLike
 ): Promise<{ status: "created" | "exists"; eventId: string }> {
-  // 1) Check if it already exists for this party.
-  // Description is nullable, so branch for clean SQL.
+  // 1) Duplicate check (same party + same name + same/null description)
   let foundId: string | null = null;
 
   if (s.desc == null) {
@@ -34,7 +33,7 @@ export async function addSuggestionToParty(
       .is("description", null)
       .limit(1);
     if (error) throw error;
-    if (data && data.length) foundId = data[0].id as string;
+    if (data?.length) foundId = data[0].id as string;
   } else {
     const { data, error } = await supabase
       .from("events")
@@ -44,46 +43,57 @@ export async function addSuggestionToParty(
       .eq("description", s.desc)
       .limit(1);
     if (error) throw error;
-    if (data && data.length) foundId = data[0].id as string;
+    if (data?.length) foundId = data[0].id as string;
   }
 
   if (foundId) {
     return { status: "exists", eventId: foundId };
   }
 
-  // 2) Create new event.
+  // 2) Insert (send ONLY columns that definitely exist + are nullable or have defaults)
   const { data: auth } = await supabase.auth.getUser();
-  const organizer_id = auth.user?.id ?? null;
+  const userId = auth?.user?.id ?? null;
 
-  const insertPayload: any = {
+  // IMPORTANT:
+  // - If your column is named `added_by_user_id` (uuid), keep it as written.
+  // - If you renamed it to `added_by` but the type is uuid, change the key to `added_by: userId`.
+  const insertPayload: Record<string, any> = {
     party_id: partyId,
     name: s.title,
     description: s.desc ?? null,
     location_name: s.location ?? null,
-    rsvp_status: "open",        // fits your enum
-    cost_mode: "per_person",    // fits your enum
-    organizer_id,
-    hero_url: s.hero ?? null,   // <<<<<<<<<<<<<< NEW
+    hero_url: s.hero ?? null,
+    added_by_user_id: userId, // <-- adjust to `added_by` if that's your uuid column name
   };
 
   const { data: created, error: insErr } = await supabase
     .from("events")
-    .insert(insertPayload)
+    .insert([insertPayload])
     .select("id")
     .single();
 
-  if (insErr) throw insErr;
+  if (insErr) {
+    // Surface the real Postgres error in your console so you can see the exact column that fails.
+    console.log("addSuggestionToParty failed", {
+      message: (insErr as any).message,
+      details: (insErr as any).details,
+      hint: (insErr as any).hint,
+      code: (insErr as any).code,
+      payload: insertPayload,
+    });
+    throw insErr;
+  }
 
   const eventId = created!.id as string;
 
-  // 3) Best-effort tag linking (ignore errors if table/columns differ).
+  // 3) Optional tag linking (best-effort)
   if (s.tags?.length) {
     try {
       await supabase
         .from("event_tags")
         .insert(s.tags.map((tag) => ({ event_id: eventId, tag })));
     } catch {
-      /* ignore optional tags failures */
+      /* ignore optional tag errors */
     }
   }
 
