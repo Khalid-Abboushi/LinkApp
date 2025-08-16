@@ -4,3 +4,59 @@ textarea:focus {
   outline: none;
   box-shadow: none; /* optional, removes extra glow */
 }
+/* =========================
+   Scrollbar styling (global)
+   ========================= */
+
+/* Themeable vars */
+:root {
+  --sb-track: rgba(255,255,255,0.06);
+  --sb-thumb: rgba(255,255,255,0.28);
+  --sb-thumb-hover: rgba(255,255,255,0.40);
+  --sb-size: 10px;         /* width/height */
+  --sb-radius: 999px;      /* pill */
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) var(--sb-track);
+}
+
+/* WebKit (Chrome/Edge/Safari) */
+*::-webkit-scrollbar {
+  width: var(--sb-size);
+  height: var(--sb-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--sb-track);
+  border-radius: var(--sb-radius);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--sb-thumb), rgba(255,255,255,0.22));
+  border-radius: var(--sb-radius);
+  border: 2px solid transparent;        /* creates a little inset gap */
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--sb-thumb-hover), rgba(255,255,255,0.30));
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Optional: smoother scrolling everywhere */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Existing focus cleanup */
+input:focus,
+textarea:focus {
+  outline: none;
+  box-shadow: none;
+}

@@ -11,6 +11,7 @@ import {
   Easing,
   LayoutChangeEvent,
   GestureResponderEvent,
+  Platform,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -39,9 +40,7 @@ type Suggestion = {
   hero: string;
 };
 
-/* =========================
-   Helpers used by the card
-   ========================= */
+/* ===== Helpers ===== */
 const haptic = (style: "light"|"medium"|"heavy" = "light")=>{
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -50,13 +49,10 @@ const haptic = (style: "light"|"medium"|"heavy" = "light")=>{
     Haptics.impactAsync(map[style]);
   } catch {}
 };
-
 const hashStr = (s:string)=>{ let h=0; for(let i=0;i<s.length;i++){ h=(h*31 + s.charCodeAt(i))|0; } return Math.abs(h); };
 const pickAccent = (hero:string, P:Palette)=> [P.p1, P.p2, P.p3, P.p4][hashStr(hero)%4];
 
-/* =========================
-   Local (no-deps) confetti
-   ========================= */
+/* ===== Local (no-deps) confetti ===== */
 type Particle = { dx:number; dy:number; r:number; rot:number; delay:number; life:number; color:string };
 const makeParticles = (colors:string[], n=26): Particle[] => Array.from({length:n}).map((_,i)=>{
   const angle = Math.random()*Math.PI - Math.PI/2;
@@ -115,10 +111,15 @@ const LocalConfetti = ({ trigger, colors, origin }:{
   );
 };
 
+/* ===== Web-only “no select/drag” style ===== */
+const NO_SELECT: any = Platform.OS === "web"
+  ? { userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitUserDrag: "none", cursor: "default" }
+  : null;
+
 /* =========================
    Exported Interactive Card
    ========================= */
-export function InteractiveCard({
+export default function InteractiveCard({
   s, P, idx, onSave, saved, onPreview,
 }:{
   s: Suggestion; P: Palette; idx:number; onSave: () => void; saved:boolean; onPreview: (s:Suggestion)=>void;
@@ -158,7 +159,7 @@ export function InteractiveCard({
     Animated.timing(rotY,{toValue:0,duration:180,easing:Easing.out(Easing.quad),useNativeDriver:true}),
   ]).start(); };
 
-  // magnetic CTA + confetti origin handled inside CTA wrapper
+  // magnetic CTA + confetti origin
   const ctaTx = useRef(new Animated.Value(0)).current;
   const ctaTy = useRef(new Animated.Value(0)).current;
   const ctaScale = useRef(new Animated.Value(1)).current;
@@ -173,8 +174,7 @@ export function InteractiveCard({
     const cx = bx + w/2, cy = by + h/2;
     const dx = x - cx, dy = y - cy;
     const dist = Math.hypot(dx, dy);
-    const threshold = 140;
-    const within = dist < threshold;
+    const within = dist < 140;
     const factor = within ? 0.12 : 0;
     Animated.spring(ctaTx,{ toValue: dx*factor, useNativeDriver:true, friction:7, tension:120 }).start();
     Animated.spring(ctaTy,{ toValue: dy*factor, useNativeDriver:true, friction:7, tension:120 }).start();
@@ -194,7 +194,6 @@ export function InteractiveCard({
   const [burst, setBurst] = useState(0);
   const [showDialog, setShowDialog] = useState(false);
 
-
   return (
     <Animated.View style={{ marginBottom:26, transform:[{ translateY: enterT }], opacity: enter }}>
       <View style={{ borderRadius:22, padding:1.2, overflow:"hidden" }}>
@@ -207,15 +206,19 @@ export function InteractiveCard({
             onResponderMove={onCardMove}
             onResponderRelease={onCardUp}
             style={{
-              borderRadius:20, overflow:"hidden", backgroundColor:P.bg2,
-              borderWidth:1, borderColor:P.glassBorder,
+              borderRadius:20,
+              overflow:"hidden",
+              backgroundColor:P.bg2,
+              borderWidth:1,
+              borderColor:P.glassBorder,
+              ...(NO_SELECT || {}),         // ⬅️ prevent selection/drag on web
               transform:[
                 { perspective: 800 },
-                { rotateX: rotX.interpolate({inputRange:[-15,15],outputRange:["-15deg","15deg"]}) },
-                { rotateY: rotY.interpolate({inputRange:[-15,15],outputRange:["-15deg","15deg"]}) },
+                { rotateX: rotX.interpolate({inputRange:[-15,15],outputRange:["-15deg","15deg"]}) as any },
+                { rotateY: rotY.interpolate({inputRange:[-15,15],outputRange:["-15deg","15deg"]}) as any },
                 { scale },
               ],
-            }}
+            } as any}
           >
             {/* hero (long press to preview) */}
             <Pressable onLongPress={()=>{ haptic("medium"); onPreview(s); }}>
@@ -241,16 +244,16 @@ export function InteractiveCard({
 
             {/* body */}
             <View style={{ padding:16 }}>
-              <Text style={{ color:P.text, fontSize:18, fontFamily:"Avenir-Heavy", letterSpacing:0.3 }}>{s.title}</Text>
-              <Text style={{ color:P.textMuted, fontSize:13, lineHeight:19, marginTop:6, fontFamily:"Avenir-Book" }}>{s.desc}</Text>
+              <Text selectable={false} style={{ color:P.text, fontSize:18, fontFamily:"Avenir-Heavy", letterSpacing:0.3 }}>{s.title}</Text>
+              <Text selectable={false} style={{ color:P.textMuted, fontSize:13, lineHeight:19, marginTop:6, fontFamily:"Avenir-Book" }}>{s.desc}</Text>
 
               <View style={{ flexDirection:"row", gap:14, marginTop:8 }}>
-                <Text style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>⏱ {s.minutes}m</Text>
-                <Text style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>👥 {s.group}</Text>
-                <Text style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>📍 {s.location}</Text>
+                <Text selectable={false} style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>⏱ {s.minutes}m</Text>
+                <Text selectable={false} style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>👥 {s.group}</Text>
+                <Text selectable={false} style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>📍 {s.location}</Text>
               </View>
 
-              {/* tags (same visuals as original Chip used for tags) */}
+              {/* tags */}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop:10 }}>
                 {s.tags.map((t,i)=>(
                   <View
@@ -262,7 +265,7 @@ export function InteractiveCard({
                       backgroundColor: "rgba(255,255,255,0.06)",
                     }}
                   >
-                    <Text style={{ color: "#F8FAFF", fontSize: 12, fontFamily: "Avenir-Book", opacity: 0.9 }}>{t}</Text>
+                    <Text selectable={false} style={{ color: "#F8FAFF", fontSize: 12, fontFamily: "Avenir-Book", opacity: 0.9 }}>{t}</Text>
                   </View>
                 ))}
               </ScrollView>
@@ -289,7 +292,7 @@ export function InteractiveCard({
                       shadowColor: accent, shadowOpacity:0.35, shadowRadius:12, shadowOffset:{ width:0, height:4 },
                     }}
                   >
-                    <Text style={{ color:"#F6F9FF", fontFamily:"Avenir-Heavy", letterSpacing:0.2 }}>Add to party</Text>
+                    <Text selectable={false} style={{ color:"#F6F9FF", fontFamily:"Avenir-Heavy", letterSpacing:0.2 }}>Add to party</Text>
                     {/* ripple from center */}
                     <Animated.View pointerEvents="none" style={{
                       position:"absolute", left:0, right:0, top:0, bottom:0,
@@ -301,7 +304,7 @@ export function InteractiveCard({
                     </Animated.View>
                   </TouchableOpacity>
 
-                  {/* 🎯 Confetti erupts from CTA center */}
+                  {/* Confetti erupts from CTA center */}
                   <LocalConfetti
                     trigger={burst}
                     colors={[accent, P.p1, P.p2, P.p3, "#fff"]}
@@ -318,26 +321,22 @@ export function InteractiveCard({
       <LinearGradient colors={["transparent", `${accent}33`, "transparent"]}
         start={{x:0,y:0}} end={{x:1,y:0}}
         style={{ position:"absolute", left:28, right:28, bottom:-10, height:16, borderRadius:12, opacity:0.8 }}/>
-        <AddToPartyDialog
-          visible={showDialog}
-          onClose={() => setShowDialog(false)}
-          P={P}
-          suggestion={{
-            id: s.id,
-            title: s.title,
-            desc: s.desc,
-            location: s.location,
-            minutes: s.minutes,
-            tags: s.tags,
-            hero: s.hero,
-          }}
-          onAdded={(partyId, res) => {
-            // optional: log/analytics, toast, etc.
-            // res.status === 'exists' | 'created'
-          }}
-        />
+
+      <AddToPartyDialog
+        visible={showDialog}
+        onClose={() => setShowDialog(false)}
+        P={P}
+        suggestion={{
+          id: s.id,
+          title: s.title,
+          desc: s.desc,
+          location: s.location,
+          minutes: s.minutes,
+          tags: s.tags,
+          hero: s.hero,
+        }}
+        onAdded={() => setShowDialog(false)}
+      />
     </Animated.View>
   );
 }
-
-export default InteractiveCard;

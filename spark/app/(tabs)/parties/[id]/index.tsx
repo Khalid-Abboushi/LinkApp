@@ -9,12 +9,15 @@ import {
   SafeAreaView,
   Platform,
   Pressable,
+  TouchableOpacity,
+  ActivityIndicator,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "@/lib/supabase";
 import PartyChat, { type AvatarMap, type NameMap } from "@/components/PartyChat";
 import PartyDetails from "@/components/party/PartyDetails";
+import CreateEventModal from "@/components/party/CreateEventModal";
 
 import {
   type PartyRow,
@@ -28,8 +31,8 @@ import {
 } from "@/data/partyRoom";
 import { useChatRealtime } from "@/hooks/useChatRealtime";
 import TopTabs, { type TabKey } from "@/components/TopTabs";
-import PartyEvents from "@/components/party/PartyEvents";
 import PartyEventsLive from "@/components/party/PartyEventsLive";
+import PartyBudget from "@/components/party/PartyBudget";
 
 /* ======= Dark (lighter) Palettes with brand names ======= */
 type AppPalette = {
@@ -44,7 +47,6 @@ type AppPalette = {
 };
 
 const PALETTES: AppPalette[] = [
-  // Balanced cool dark
   {
     name: "Luxe Neon",
     appBg: "#0E131B",
@@ -53,9 +55,8 @@ const PALETTES: AppPalette[] = [
     text: "#E8EEF8",
     textMuted: "#9FB1C7",
     border: "#273247",
-    primary: "#3B82F6", // accessible blue
+    primary: "#3B82F6",
   },
-  // Deep indigo with lavender accents
   {
     name: "Electric Sunset",
     appBg: "#0F1016",
@@ -64,9 +65,8 @@ const PALETTES: AppPalette[] = [
     text: "#ECEAF6",
     textMuted: "#B7B5CC",
     border: "#282E45",
-    primary: "#7C3AED", // vivid indigo
+    primary: "#7C3AED",
   },
-  // Teal/emerald accent, very legible
   {
     name: "Cyber Lime",
     appBg: "#0C1413",
@@ -75,43 +75,18 @@ const PALETTES: AppPalette[] = [
     text: "#E6F5F2",
     textMuted: "#A6C9C1",
     border: "#22312E",
-    primary: "#10B981", // emerald
+    primary: "#10B981",
   },
 ];
 
-type Tab = "details" | "chat" | "events" | "polls" | "gallery";
+type Tab = "details" | "chat" | "events" | "budget" | "gallery";
 const MAX_W = 920;
-
-const TabChip = ({
-  label,
-  active,
-  onPress,
-  P,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-  P: AppPalette;
-}) => (
-  <Pressable
-    onPress={onPress}
-    style={{
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 8,
-      backgroundColor: active ? P.surfaceAlt : "transparent",
-      borderWidth: 1,
-      borderColor: active ? P.border : "transparent",
-      marginRight: 8,
-    }}
-  >
-    <Text style={{ color: active ? P.text : P.textMuted, fontWeight: "600" }}>{label}</Text>
-  </Pressable>
-);
 
 export default function PartyRoom() {
   const { id: partyId } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<any | null>(null);
 
   const [palIdx, setPalIdx] = useState(0);
   const P = PALETTES[palIdx % PALETTES.length];
@@ -226,7 +201,7 @@ export default function PartyRoom() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: P.appBg }}>
-      {/* Compact header to keep chat full-screen on mobile */}
+      {/* Header */}
       <View style={{ alignItems: "center" }}>
         <View
           style={{
@@ -239,7 +214,6 @@ export default function PartyRoom() {
             gap: 10,
           }}
         >
-          {/* Party name truncates, palette button stays visible */}
           <Text
             style={{ color: P.text, fontSize: 18, fontWeight: "700", flex: 1 }}
             numberOfLines={1}
@@ -248,7 +222,6 @@ export default function PartyRoom() {
             {party?.name || "Party"}
           </Text>
 
-          {/* Palette Switcher (chip) */}
           <Pressable
             onPress={() => setPalIdx((i) => (i + 1) % PALETTES.length)}
             style={{
@@ -261,18 +234,14 @@ export default function PartyRoom() {
               flexShrink: 0,
             }}
           >
-            <Text style={{ color: P.text, fontSize: 12 }}>{PALETTES[(palIdx + 1) % PALETTES.length].name}</Text>
+            <Text style={{ color: P.text, fontSize: 12 }}>
+              {PALETTES[(palIdx + 1) % PALETTES.length].name}
+            </Text>
           </Pressable>
         </View>
 
-        {/* Tabs (kept, but slim) */}
-        <View
-          style={{
-            width: containerW,
-            paddingHorizontal: 16,
-            paddingBottom: 8,
-          }}
-        >
+        {/* Tabs */}
+        <View style={{ width: containerW, paddingHorizontal: 16, paddingBottom: 8 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <TopTabs
               value={tab as TabKey}
@@ -332,16 +301,8 @@ export default function PartyRoom() {
                 {party && <PartyDetails partyId={party.id} appPalette={P} />}
               </View>
             )}
+
             {tab === "events" && (
-              <View style={{ backgroundColor: P.surface, borderColor: P.border, borderWidth: 1, borderRadius: 12, marginTop: 12, padding: 16, alignSelf: "stretch" }}>
-                {party ? (
-                  <PartyEventsLive partyId={party.id} P={P} />
-                ) : (
-                  <Text style={{ color: P.textMuted }}>Loading party…</Text>
-                )}
-              </View>
-            )}
-            {tab === "polls" && (
               <View
                 style={{
                   backgroundColor: P.surface,
@@ -353,9 +314,41 @@ export default function PartyRoom() {
                   alignSelf: "stretch",
                 }}
               >
-                <Text style={{ color: P.textMuted }}>Polls coming soon.</Text>
+                {party ? (
+                  <PartyEventsLive
+                    partyId={party.id}
+                    P={P}
+                    onEditRequest={(ev) => {
+                      setEditingEvent(ev);
+                      setCreateOpen(true);
+                    }}
+                  />
+                ) : (
+                  <Text style={{ color: P.textMuted }}>Loading party…</Text>
+                )}
               </View>
             )}
+
+            {tab === "budget" && (
+              <View
+                style={{
+                  backgroundColor: P.surface,
+                  borderColor: P.border,
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  marginTop: 12,
+                  padding: 16,
+                  alignSelf: "stretch",
+                }}
+              >
+                {party ? (
+                  <PartyBudget partyId={party.id} myId={myId} P={P} />
+                ) : (
+                  <Text style={{ color: P.textMuted }}>Loading party…</Text>
+                )}
+              </View>
+            )}
+
             {tab === "gallery" && (
               <View
                 style={{
@@ -374,6 +367,66 @@ export default function PartyRoom() {
           </View>
         </ScrollView>
       )}
+
+      {/* ---- Screen-level floating CTA + modal (only on Events tab) ---- */}
+    {tab === "events" && (
+      <View pointerEvents="box-none" style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 999 }}>
+    {/* Center to content width used by PartyEventsLive: width: containerW - 20, px: 10 */}
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 20 + insets.bottom,
+        alignItems: "center",
+      }}
+    >
+      <View style={{ width: containerW - 20, paddingHorizontal: 10, alignSelf: "center" }}>
+        <View style={{ alignItems: "flex-end" }}>
+          <TouchableOpacity
+            activeOpacity={0.92}
+            onPress={() => {
+              setEditingEvent(null);   // so the modal opens in CREATE mode
+              setCreateOpen(true);
+            }}
+            style={{
+              paddingHorizontal: 18,
+              paddingVertical: 14,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: `${P.primary}AA`,
+              backgroundColor: P.primary,
+              shadowColor: P.primary,
+              shadowOpacity: 0.35,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: 4 },
+            }}
+          >
+            <Text style={{ color: "#F6F9FF", fontWeight: "800", letterSpacing: 0.2 }}>
+              Create Event
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+
+    {party && (
+      <CreateEventModal
+        visible={createOpen}
+        onClose={() => {
+          setCreateOpen(false);
+          setEditingEvent(null); // leave edit mode when closing
+        }}
+        partyId={party.id}
+        P={P}
+        currencyDefault="USD"
+        initialEvent={editingEvent}           // <<— prefill when editing
+        mode={editingEvent ? "edit" : "create"} // optional, if your modal supports it
+      />
+    )}
+      </View>
+    )}
     </SafeAreaView>
   );
 }

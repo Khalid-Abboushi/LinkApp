@@ -45,14 +45,22 @@ type Role = "owner" | "admin" | "member";
 type EventRow = {
   id: string;
   party_id: string;
+  active?: boolean | null;
+
   name: string;
   description?: string | null;
   location_name?: string | null;
+  location_address?: string | null;
   hero_url?: string | null;
   start_at?: string | null;
   end_at?: string | null;
   created_at: string;
+
+  added_by?: string | null;
+  dress_code?: number | null;
+  organizer_id?: string | null;
 };
+
 type EventWithVotes = EventRow & {
   likes: number;
   dislikes: number;
@@ -79,7 +87,7 @@ function useRealtimeAuthBridge() {
 async function fetchPartyEvents(partyId: string): Promise<EventRow[]> {
   const { data, error } = await supabase
     .from("events")
-    .select("id,party_id,name,description,location_name,hero_url,start_at,end_at,created_at")
+    .select("id,party_id,active,name,description,location_name,location_address,hero_url,start_at,end_at,created_at,dress_code,added_by,organizer_id")
     .eq("party_id", partyId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -91,7 +99,6 @@ async function fetchAggregates(ids: string[]) {
   const mine = new Map<string, -1 | 0 | 1>();
   if (!ids.length) return { counts, mine };
 
-  // Pull all votes and filter locally (works with RLS + realtime)
   const { data: votes } = await supabase.from("event_votes").select("event_id,vote");
   votes?.forEach((v) => {
     if (!ids.includes(v.event_id)) return;
@@ -131,13 +138,23 @@ async function fetchMyRole(partyId: string): Promise<Role | "none"> {
   return (data?.role as Role) ?? "none";
 }
 
+async function fetchViewerName(): Promise<string | null> {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return null;
+  const { data } = await supabase.from("profiles").select("display_name,username").eq("id", uid).maybeSingle();
+  return (data?.display_name || data?.username || null) as string | null;
+}
+
 /* ========= Component ========= */
 export default function PartyEventsLive({
   partyId,
   P: PIn,
+  onEditRequest,
 }: {
   partyId: string;
   P: AppPalette | DiscoverPalette;
+  onEditRequest?: (ev: any) => void;
 }) {
   useRealtimeAuthBridge();
   const P = useMemo(() => normalizePalette(PIn), [PIn]);
@@ -147,17 +164,26 @@ export default function PartyEventsLive({
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<EventWithVotes[]>([]);
   const [role, setRole] = useState<Role | "none">("none");
-  const canEditTime = role === "owner" || role === "admin";
+  const [viewerName, setViewerName] = useState<string | null>(null);
   const idSetRef = useRef<Set<string>>(new Set());
 
   const sortRows = (arr: EventWithVotes[]) =>
-    arr.sort((a, b) => b.net - a.net || a.created_at.localeCompare(b.created_at));
+    arr.sort((a, b) =>
+      ((b.active ? 1 : 0) - (a.active ? 1 : 0)) || // active first
+      b.net - a.net ||
+      a.created_at.localeCompare(b.created_at)
+    );
 
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [events, myRole] = await Promise.all([fetchPartyEvents(partyId), fetchMyRole(partyId)]);
+      const [events, myRole, myName] = await Promise.all([
+        fetchPartyEvents(partyId),
+        fetchMyRole(partyId),
+        fetchViewerName(),
+      ]);
       setRole(myRole);
+      setViewerName(myName);
       idSetRef.current = new Set(events.map((e) => e.id));
       const ids = Array.from(idSetRef.current);
       const { counts, mine } = await fetchAggregates(ids);
@@ -190,22 +216,63 @@ export default function PartyEventsLive({
     loadAll();
   }, [partyId]);
 
-  // Realtime: events in this party → reload
+  // Realtime: events mutations → patch without full reload
   useEffect(() => {
     const channel = supabase
       .channel(`party-events-${partyId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "events", filter: `party_id=eq.${partyId}` },
-        () => loadAll()
+        (payload) => {
+          const next = (payload.new as any) ?? (payload.old as any);
+          if (!next?.id) return;
+
+          if (payload.eventType === "INSERT" || payload.eventType === "DELETE") {
+            loadAll();
+            return;
+          }
+
+          if (payload.eventType === "UPDATE") {
+            setRows((prev) => {
+              if (!prev.some((e) => e.id === next.id)) return prev;
+              const patchKeys: (keyof EventRow)[] = [
+                "name",
+                "description",
+                "location_name",
+                "location_address",
+                "hero_url",
+                "start_at",
+                "end_at",
+                "added_by",
+                "dress_code",
+                "active", // include active
+              ];
+              let changed = false;
+              const updated = prev.map((e) => {
+                if (e.id !== next.id) return e;
+                const merged: any = { ...e };
+                for (const k of patchKeys) {
+                  const nv = (next as any)[k];
+                  if (nv !== undefined && merged[k] !== nv) {
+                    merged[k] = nv;
+                    changed = true;
+                  }
+                }
+                return merged as typeof e;
+              });
+              return changed ? sortRows(updated) : prev;
+            });
+          }
+        }
       )
       .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
     };
   }, [partyId]);
 
-  // Realtime: any vote change → if it's one of ours, refresh counts (debounced)
+  // Realtime: vote changes → refresh counts (debounced)
   useEffect(() => {
     const channel = supabase
       .channel(`party-votes-${partyId}`)
@@ -250,7 +317,6 @@ export default function PartyEventsLive({
         .from("event_votes")
         .upsert({ event_id: eventId, profile_id, vote }, { onConflict: "event_id,profile_id" });
       if (error) throw error;
-      // realtime will refresh for everyone
     } catch (e) {
       await refreshVotes();
     }
@@ -281,15 +347,42 @@ export default function PartyEventsLive({
     );
   }
 
+  const isOwner = role === "owner";
+
   return (
     <ScrollView
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={P.text} />}
       contentContainerStyle={{ alignItems: "center", paddingBottom: 60 }}
     >
       <View style={{ width: containerW - 20, paddingHorizontal: 10, paddingTop: 10 }}>
-        {rows.map((ev) => (
-          <EventCardPrism key={ev.id} P={P} event={ev} onVote={handleVote} canEditTime={canEditTime} />
-        ))}
+        {rows.map((ev) => {
+          const creatorCanEdit =
+            !!ev.added_by && !!viewerName && ev.added_by.toLowerCase() === viewerName.toLowerCase();
+          return (
+            <EventCardPrism
+              key={ev.id}
+              P={{
+                name: P.name,
+                bg: P.bg,
+                bg2: P.bg2,
+                text: P.text,
+                textMuted: P.textMuted,
+                glass: P.glass,
+                glassBorder: P.glassBorder,
+                p1: P.p1,
+                p2: P.p2,
+                p3: P.p3,
+                p4: P.p4,
+              }}
+              event={ev}
+              onVote={handleVote}
+              canEditTime={role === "owner" || role === "admin"}
+              isOwner={isOwner}
+              canEditEvent={creatorCanEdit}
+              onEdit={creatorCanEdit ? onEditRequest : undefined}
+            />
+          );
+        })}
       </View>
     </ScrollView>
   );

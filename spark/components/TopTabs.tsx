@@ -4,7 +4,7 @@ import { View, Text, Pressable, ScrollView, Animated, LayoutChangeEvent } from "
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons, Feather } from "@expo/vector-icons";
 
-export type TabKey = "details" | "chat" | "events" | "polls" | "gallery";
+export type TabKey = "details" | "chat" | "events" | "budget" | "gallery";
 
 type Colors = {
   surface: string;     // control background
@@ -22,7 +22,7 @@ type Props = {
   colors: Colors;
 };
 
-const DEFAULT_TABS: TabKey[] = ["details", "chat", "events", "polls", "gallery"];
+const DEFAULT_TABS: TabKey[] = ["details", "chat", "events", "budget", "gallery"];
 
 export default function TopTabs({ value, onChange, tabs = DEFAULT_TABS, colors }: Props) {
   const containerWidthRef = useRef(0);
@@ -79,8 +79,8 @@ export default function TopTabs({ value, onChange, tabs = DEFAULT_TABS, colors }
         return <Ionicons name="chatbubble-ellipses-outline" size={16} color={c} />;
       case "events":
         return <Ionicons name="calendar-outline" size={16} color={c} />;
-      case "polls":
-        return <Ionicons name="bar-chart-outline" size={16} color={c} />;
+      case "budget":
+        return <Ionicons name="cash" size={16} color={c} />;
       case "gallery":
       default:
         return <Ionicons name="images-outline" size={16} color={c} />;
@@ -88,7 +88,7 @@ export default function TopTabs({ value, onChange, tabs = DEFAULT_TABS, colors }
   };
 
   const label = (t: TabKey) =>
-    t === "details" ? "Details" : t === "chat" ? "Chat" : t === "events" ? "Events" : t === "polls" ? "Polls" : "Gallery";
+    t === "details" ? "Details" : t === "chat" ? "Chat" : t === "events" ? "Events" : t === "budget" ? "Budget" : "Gallery";
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 2 }}>
