@@ -15,8 +15,10 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
+  Linking, // ✅ for openSettings on native
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/providers/AuthProvider";
 import { useRouter } from "expo-router";
@@ -61,6 +63,9 @@ function usePress(scale = 0.98) {
 const AVATAR_BUCKET = "party-pics";
 const AVATAR_PREFIX = "avatars";
 
+/* ===== Location table name ===== */
+const LOCATION_TABLE = "user_locations";
+
 type ProfileRow = {
   id: string;
   display_name: string | null;
@@ -71,18 +76,110 @@ type ProfileRow = {
 };
 
 type PendingIncoming = {
-  id: string;          // friendship row id
-  from_id: string;     // requester id
+  id: string;
+  from_id: string;
   from_name?: string | null;
   from_avatar?: string | null;
 };
 
 type FriendTile = {
-  row_id: string;              // friendship row id
-  other_id: string;            // the other user's id
+  row_id: string;
+  other_id: string;
   other_name?: string | null;
   other_avatar?: string | null;
 };
+
+/* =========================
+   Location helpers
+   ========================= */
+
+// Get coords with a permission prompt (native+web). Returns null if denied/fails.
+async function getCoordsWithPrompt(): Promise<{ latitude:number; longitude:number; accuracy:number } | null> {
+  try {
+    if (Platform.OS === "web") {
+      if (!("geolocation" in navigator)) return null;
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000 })
+      );
+      return {
+        latitude: pos.coords.latitude ?? 0,
+        longitude: pos.coords.longitude ?? 0,
+        accuracy: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : 0,
+      };
+    }
+
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") return null;
+
+    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    return {
+      latitude: loc.coords.latitude ?? 0,
+      longitude: loc.coords.longitude ?? 0,
+      accuracy: Number.isFinite(loc.coords.accuracy) ? (loc.coords.accuracy as number) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Upsert latest coords
+async function upsertUserLocation(userId: string, coords: { latitude:number; longitude:number; accuracy:number }) {
+  const { error } = await supabase
+    .from(LOCATION_TABLE)
+    .upsert(
+      { user_id: userId, latitude: coords.latitude, longitude: coords.longitude, accuracy: Math.round(coords.accuracy) },
+      { onConflict: "user_id" }
+    );
+  if (error) throw error;
+}
+
+// Set blank coords
+async function writeDefaultLocation(userId: string) {
+  const { error } = await supabase
+    .from(LOCATION_TABLE)
+    .upsert(
+      { user_id: userId, latitude: 0, longitude: 0, accuracy: 0 },
+      { onConflict: "user_id" }
+    );
+  if (error) throw error;
+}
+
+/** Open system/browser settings so the user can fully revoke permission. */
+async function openSystemLocationSettings() {
+  if (Platform.OS === "web") {
+    // No reliable deep-link; show instructions (Edge/Chrome/Safari/Firefox)
+    Alert.alert(
+      "Turn off browser location",
+      "Click the lock icon in your address bar → Site settings → Location → set to Block or click Reset permission.",
+      [{ text: "OK" }]
+    );
+    return;
+  }
+
+  // iOS/Android: deep-link to the app settings screen
+  Alert.alert(
+    "Disable device location",
+    "I'll open your app settings. In the permissions list, switch Location to Off.",
+    [
+      { text: "Cancel", style: "cancel" },
+      { text: "Open Settings", onPress: () => Linking.openSettings() },
+    ]
+  );
+}
+
+/** Best-effort web revoke using the Permissions API (not guaranteed). */
+async function disableWebPermission() {
+  if (Platform.OS !== "web") return;
+  try {
+    // Types are loose because RN Web doesn't ship DOM lib types by default
+    const anyNav: any = navigator as any;
+    if (anyNav?.permissions?.revoke) {
+      await anyNav.permissions.revoke({ name: "geolocation" as PermissionName });
+    }
+  } catch {
+    // Ignore; many browsers don’t actually revoke programmatically
+  }
+}
 
 export default function Profile() {
   const { user, signOut } = useAuth();
@@ -100,7 +197,7 @@ export default function Profile() {
   // friends & requests
   const [friends, setFriends] = React.useState<FriendTile[]>([]);
   const [pendingIn, setPendingIn] = React.useState<PendingIncoming[]>([]);
-  const [pendingOut, setPendingOut] = React.useState<Set<string>>(new Set()); // target user ids I sent requests to
+  const [pendingOut, setPendingOut] = React.useState<Set<string>>(new Set());
 
   // tiny in-page toasts
   const [toasts, setToasts] = React.useState<{ id: string; title: string }[]>([]);
@@ -137,36 +234,32 @@ export default function Profile() {
   const loadFriendsSnapshot = React.useCallback(async () => {
     if (!user?.id) return;
 
-    // accepted friendships containing me
-    const { data: fr, error: errF } = await supabase
+    const { data: fr } = await supabase
       .from("friendships")
       .select("id, user_id, friend_id, requested_by, status")
       .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
       .eq("status", "accepted");
 
-    if (!errF) {
-      const otherIds = (fr ?? []).map(r => (r.user_id === user.id ? r.friend_id : r.user_id));
-      const { data: profs } = await supabase
-        .from("profiles")
-        .select("id, display_name, avatar_url")
-        .in("id", otherIds.length ? otherIds : ["00000000-0000-0000-0000-000000000000"]);
+    const otherIds = (fr ?? []).map(r => (r.user_id === user.id ? r.friend_id : r.user_id));
+    const { data: profs } = await supabase
+      .from("profiles")
+      .select("id, display_name, avatar_url")
+      .in("id", otherIds.length ? otherIds : ["00000000-0000-0000-0000-000000000000"]);
 
-      const profMap = new Map((profs ?? []).map(p => [p.id, p]));
-      setFriends(
-        (fr ?? []).map(r => {
-          const other = r.user_id === user.id ? r.friend_id : r.user_id;
-          const prof = profMap.get(other);
-          return {
-            row_id: r.id,
-            other_id: other,
-            other_name: prof?.display_name ?? null,
-            other_avatar: prof?.avatar_url ?? null,
-          } as FriendTile;
-        })
-      );
-    }
+    const profMap = new Map((profs ?? []).map(p => [p.id, p]));
+    setFriends(
+      (fr ?? []).map(r => {
+        const other = r.user_id === user.id ? r.friend_id : r.user_id;
+        const prof = profMap.get(other);
+        return {
+          row_id: r.id,
+          other_id: other,
+          other_name: prof?.display_name ?? null,
+          other_avatar: prof?.avatar_url ?? null,
+        } as FriendTile;
+      })
+    );
 
-    // pending incoming (to me)
     const { data: pin } = await supabase
       .from("friendships")
       .select("id, user_id, friend_id, requested_by, status")
@@ -189,7 +282,6 @@ export default function Profile() {
       }))
     );
 
-    // pending outgoing (I sent)
     const { data: pout } = await supabase
       .from("friendships")
       .select("user_id, friend_id, requested_by, status")
@@ -202,7 +294,7 @@ export default function Profile() {
     loadFriendsSnapshot();
   }, [loadFriendsSnapshot]);
 
-  /* ========= realtime: friendships table (both sides) ========= */
+  /* ========= realtime: friendships table ========= */
   React.useEffect(() => {
     if (!user?.id) return;
 
@@ -211,24 +303,12 @@ export default function Profile() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "friendships", filter: `user_id=eq.${user.id}` },
-        (payload) => {
-          const row: any = payload.new ?? payload.old;
-          if (row?.status === "accepted") {
-            setToasts((prev) => [{ id: `t:${Date.now()}`, title: "New friend 🎉" }, ...prev].slice(0, 3));
-          }
-          loadFriendsSnapshot();
-        }
+        () => { loadFriendsSnapshot(); }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "friendships", filter: `friend_id=eq.${user.id}` },
-        (payload) => {
-          const row: any = payload.new ?? payload.old;
-          if (row?.status === "accepted") {
-            setToasts((prev) => [{ id: `t:${Date.now()}`, title: "New friend 🎉" }, ...prev].slice(0, 3));
-          }
-          loadFriendsSnapshot();
-        }
+        () => { loadFriendsSnapshot(); }
       )
       .subscribe();
 
@@ -251,12 +331,10 @@ export default function Profile() {
   /* ========= avatar upload ========= */
   const changeAvatar = async () => {
     if (!user?.id) return;
-    
-    // Ask for photos permission
+
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== "granted") return;
-    
-    // Let user pick & crop to square
+
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
@@ -264,12 +342,10 @@ export default function Profile() {
       quality: 1,
     });
     if (res.canceled || !res.assets?.length) return;
-  
+
     setSaving(true);
     try {
       const a = res.assets[0];
-    
-      // ✅ Mobile-safe upload (re-encodes to real JPEG and uploads as ArrayBuffer)
       const url = await uploadImageToPartyPics({
         uri: a.uri,
         name: (a as any).name ?? (a as any).fileName ?? null,
@@ -277,10 +353,8 @@ export default function Profile() {
         type: (a as any).type ?? null,
         mimeType: (a as any).mimeType ?? null,
       });
-    
-      // Save on profile and refresh the <Image>
       await updateField({ avatar_url: url });
-      setAvatarBust(Date.now()); // cache-bust
+      setAvatarBust(Date.now());
       setImgReady(false);
     } catch (e: any) {
       console.log("avatar upload error:", e?.message || e);
@@ -290,133 +364,50 @@ export default function Profile() {
     }
   };
 
-  /* ========= simple subcomponents ========= */
+  /* ========= Location toggle handler ========= */
+  const onToggleLocation = async (nextVal: boolean) => {
+    if (!user?.id) return;
 
-  const ToastRow = ({ text }: { text: string }) => (
-    <View style={{ alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.03)", borderColor: P.border, borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 8 }}>
-      <Text style={{ color: P.text, fontFamily: fontHeavy }}>{text}</Text>
-    </View>
-  );
-
-  const RequestRow = ({ r }: { r: PendingIncoming }) => (
-    <View style={{ alignSelf: "stretch", borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "rgba(255,255,255,0.03)", flexDirection: "row", alignItems: "center", gap: 10 }}>
-      <Image source={{ uri: r.from_avatar || "https://placehold.co/80x80/png" }} style={{ width: 36, height: 36, borderRadius: 999, borderWidth: 1, borderColor: P.border }} />
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: P.text, fontFamily: fontHeavy }}>{r.from_name || "User"}</Text>
-      </View>
-      <Pressable
-        onPress={async () => {
-          await acceptFriendRequest(r.id);
-          setPendingIn(prev => prev.filter(x => x.id !== r.id));
-        }}
-        style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: P.primary, marginRight: 6 }}
-      >
-        <Text style={{ color: P.text, fontFamily: fontHeavy }}>Accept</Text>
-      </Pressable>
-      <Pressable
-        onPress={async () => {
-          await declineFriendRequest(r.id);
-          setPendingIn(prev => prev.filter(x => x.id !== r.id));
-        }}
-        style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: P.border }}
-      >
-        <Text style={{ color: P.text, fontFamily: fontHeavy }}>Decline</Text>
-      </Pressable>
-    </View>
-  );
-
-  const FriendRow = ({ f }: { f: FriendTile }) => (
-    <View style={{ alignSelf: "stretch", borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "rgba(255,255,255,0.03)", flexDirection: "row", alignItems: "center", gap: 10 }}>
-      <Image source={{ uri: f.other_avatar || "https://placehold.co/80x80/png" }} style={{ width: 36, height: 36, borderRadius: 999, borderWidth: 1, borderColor: P.border }} />
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: P.text, fontFamily: fontHeavy }}>{f.other_name || "Friend"}</Text>
-      </View>
-    </View>
-  );
-
-  const FriendFinder = () => {
-    const [q, setQ] = React.useState("");
-    const [loading, setLoading] = React.useState(false);
-    const [rows, setRows] = React.useState<Array<{ id: string; display_name: string | null; avatar_url: string | null }>>([]);
-
-    const friendsSet = React.useMemo(() => new Set(friends.map(f => f.other_id)), [friends]);
-
-    const search = async () => {
-      if (!user?.id) return;
-      setLoading(true);
-      try {
-        const qb = supabase.from("profiles").select("id, display_name, avatar_url").limit(12);
-        if (q.trim()) qb.ilike("display_name", `%${q.trim()}%`);
-        const { data, error } = await qb;
-        if (error) throw error;
-        setRows((data || []).filter(p => p.id !== user.id));
-      } catch (e:any) {
-        Alert.alert("Search error", e?.message || String(e));
-      } finally {
-        setLoading(false);
+    if (nextVal) {
+      // Turning ON → prompt + save
+      const coords = await getCoordsWithPrompt();
+      if (!coords) {
+        Alert.alert(
+          "Location permission",
+          "We couldn't access your location. You can allow it in system settings and try again."
+        );
+        // keep toggle off + optionally write default
+        await writeDefaultLocation(user.id).catch(()=>{});
+        await updateField({ location_enabled: false });
+        return;
       }
-    };
 
-    return (
-      <View style={{ backgroundColor: P.surface, borderColor: P.border, borderWidth: 1, borderRadius: 12, padding: 14 }}>
-        <Text style={{ color: P.text, fontFamily: fontHeavy, marginBottom: 8 }}>Add friends</Text>
-        <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
-          <View style={{ flex: 1, borderWidth: 1, borderColor: P.border, borderRadius: 8, paddingHorizontal: 10 }}>
-            <TextInput
-              value={q}
-              onChangeText={setQ}
-              placeholder="Search by name…"
-              placeholderTextColor={P.textMuted}
-              style={{ color: P.text, paddingVertical: 8, fontFamily: fontSans }}
-            />
-          </View>
-          <Pressable onPress={search} style={{ paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: P.primary, justifyContent: "center" }}>
-            <Text style={{ color: P.text, fontFamily: fontHeavy }}>Search</Text>
-          </Pressable>
-        </View>
+      try {
+        setSaving(true);
+        await upsertUserLocation(user.id, coords);
+        await updateField({ location_enabled: true });
+      } catch (e: any) {
+        Alert.alert("Location error", e?.message ?? String(e));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
 
-        {loading ? (
-          <ActivityIndicator />
-        ) : (
-          rows.map((u) => {
-            const alreadyFriend = friendsSet.has(u.id);
-            const alreadySent = pendingOut.has(u.id);
-            return (
-              <View key={u.id} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: P.border, borderRadius: 10, padding: 8, marginBottom: 8 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                  <Image source={{ uri: u.avatar_url || "https://placehold.co/80x80/png" }} style={{ width: 32, height: 32, borderRadius: 999 }} />
-                  <Text style={{ color: P.text, fontFamily: fontHeavy }}>{u.display_name || "User"}</Text>
-                </View>
-                {alreadyFriend ? (
-                  <Text style={{ color: P.textMuted, fontFamily: fontHeavy }}>Friend</Text>
-                ) : alreadySent ? (
-                  <Text style={{ color: P.textMuted, fontFamily: fontHeavy }}>Already sent</Text>
-                ) : (
-                  <Pressable
-                    onPress={async () => {
-                      // optimistic mark as sent
-                      setPendingOut(prev => new Set(prev).add(u.id));
-                      try {
-                        await sendFriendRequest(u.id);
-                      } catch (e:any) {
-                        // rollback on error
-                        const copy = new Set(pendingOut);
-                        copy.delete(u.id);
-                        setPendingOut(copy);
-                        Alert.alert("Request error", e?.message || String(e));
-                      }
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: P.primary }}
-                  >
-                    <Text style={{ color: P.text, fontFamily: fontHeavy }}>Add</Text>
-                  </Pressable>
-                )}
-              </View>
-            );
-          })
-        )}
-      </View>
-    );
+    // Turning OFF → clear coords + flip flag + guide user to revoke device/browser permission
+    try {
+      setSaving(true);
+      await writeDefaultLocation(user.id);
+      await updateField({ location_enabled: false });
+    } catch (e: any) {
+      Alert.alert("Location error", e?.message ?? String(e));
+    } finally {
+      setSaving(false);
+    }
+
+    // Best effort revoke (web) + open system/browser settings w/ instructions
+    await disableWebPermission();
+    await openSystemLocationSettings();
   };
 
   /* ========= render ========= */
@@ -481,13 +472,6 @@ export default function Profile() {
             </View>
           </View>
 
-          {/* Toasts (short) */}
-          {toasts.length > 0 && (
-            <View style={{ marginTop: 18 }}>
-              {toasts.map(t => <ToastRow key={t.id} text={t.title} />)}
-            </View>
-          )}
-
           {/* Friend requests */}
           <View style={{ height: 18 }} />
           <Text style={{ color: P.text, fontWeight: "800", marginBottom: 8 }}>Friend requests</Text>
@@ -510,7 +494,7 @@ export default function Profile() {
             )}
           </View>
 
-          {/* Add friends (search + request) */}
+          {/* Add friends */}
           <View style={{ height: 18 }} />
           <FriendFinder />
 
@@ -543,7 +527,7 @@ export default function Profile() {
               label="Location"
               desc="Only your friends will be able to see your location."
               value={!!profile?.location_enabled}
-              onChange={(v) => updateField({ location_enabled: v })}
+              onChange={(v) => onToggleLocation(v)}
             />
             <View style={{ height: 4 }} />
             <Toggle
@@ -560,6 +544,138 @@ export default function Profile() {
       </ScrollView>
     </SafeAreaView>
   );
+
+  /* ===== inner components ===== */
+  function ToastRow({ text }: { text: string }) {
+    return (
+      <View style={{ alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.03)", borderColor: P.border, borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 8 }}>
+        <Text style={{ color: P.text, fontFamily: fontHeavy }}>{text}</Text>
+      </View>
+    );
+  }
+
+  function RequestRow({ r }: { r: PendingIncoming }) {
+    return (
+      <View style={{ alignSelf: "stretch", borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "rgba(255,255,255,0.03)", flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <Image source={{ uri: r.from_avatar || "https://placehold.co/80x80/png" }} style={{ width: 36, height: 36, borderRadius: 999, borderWidth: 1, borderColor: P.border }} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: P.text, fontFamily: fontHeavy }}>{r.from_name || "User"}</Text>
+        </View>
+        <Pressable
+          onPress={async () => {
+            await acceptFriendRequest(r.id);
+            setPendingIn(prev => prev.filter(x => x.id !== r.id));
+          }}
+          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: P.primary, marginRight: 6 }}
+        >
+          <Text style={{ color: P.text, fontFamily: fontHeavy }}>Accept</Text>
+        </Pressable>
+        <Pressable
+          onPress={async () => {
+            await declineFriendRequest(r.id);
+            setPendingIn(prev => prev.filter(x => x.id !== r.id));
+          }}
+          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: P.border }}
+        >
+          <Text style={{ color: P.text, fontFamily: fontHeavy }}>Decline</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  function FriendRow({ f }: { f: FriendTile }) {
+    return (
+      <View style={{ alignSelf: "stretch", borderWidth: 1, borderColor: P.border, borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "rgba(255,255,255,0.03)", flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <Image source={{ uri: f.other_avatar || "https://placehold.co/80x80/png" }} style={{ width: 36, height: 36, borderRadius: 999, borderWidth: 1, borderColor: P.border }} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: P.text, fontFamily: fontHeavy }}>{f.other_name || "Friend"}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  function FriendFinder() {
+    const [q, setQ] = React.useState("");
+    const [loading, setLoading] = React.useState(false);
+    const [rows, setRows] = React.useState<Array<{ id: string; display_name: string | null; avatar_url: string | null }>>([]);
+
+    const friendsSet = React.useMemo(() => new Set(friends.map(f => f.other_id)), [friends]);
+
+    const search = async () => {
+      if (!user?.id) return;
+      setLoading(true);
+      try {
+        const qb = supabase.from("profiles").select("id, display_name, avatar_url").limit(12);
+        if (q.trim()) qb.ilike("display_name", `%${q.trim()}%`);
+        const { data, error } = await qb;
+        if (error) throw error;
+        setRows((data || []).filter(p => p.id !== user.id));
+      } catch (e:any) {
+        Alert.alert("Search error", e?.message || String(e));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    return (
+      <View style={{ backgroundColor: P.surface, borderColor: P.border, borderWidth: 1, borderRadius: 12, padding: 14 }}>
+        <Text style={{ color: P.text, fontFamily: fontHeavy, marginBottom: 8 }}>Add friends</Text>
+        <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+          <View style={{ flex: 1, borderWidth: 1, borderColor: P.border, borderRadius: 8, paddingHorizontal: 10 }}>
+            <TextInput
+              value={q}
+              onChangeText={setQ}
+              placeholder="Search by name…"
+              placeholderTextColor={P.textMuted}
+              style={{ color: P.text, paddingVertical: 8, fontFamily: fontSans }}
+            />
+          </View>
+          <Pressable onPress={search} style={{ paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: P.primary, justifyContent: "center" }}>
+            <Text style={{ color: P.text, fontFamily: fontHeavy }}>Search</Text>
+          </Pressable>
+        </View>
+
+        {loading ? (
+          <ActivityIndicator />
+        ) : (
+          rows.map((u) => {
+            const alreadyFriend = friendsSet.has(u.id);
+            const alreadySent = pendingOut.has(u.id);
+            return (
+              <View key={u.id} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: P.border, borderRadius: 10, padding: 8, marginBottom: 8 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <Image source={{ uri: u.avatar_url || "https://placehold.co/80x80/png" }} style={{ width: 32, height: 32, borderRadius: 999 }} />
+                  <Text style={{ color: P.text, fontFamily: fontHeavy }}>{u.display_name || "User"}</Text>
+                </View>
+                {alreadyFriend ? (
+                  <Text style={{ color: P.textMuted, fontFamily: fontHeavy }}>Friend</Text>
+                ) : alreadySent ? (
+                  <Text style={{ color: P.textMuted, fontFamily: fontHeavy }}>Already sent</Text>
+                ) : (
+                  <Pressable
+                    onPress={async () => {
+                      setPendingOut(prev => new Set(prev).add(u.id));
+                      try {
+                        await sendFriendRequest(u.id);
+                      } catch (e:any) {
+                        const copy = new Set(pendingOut);
+                        copy.delete(u.id);
+                        setPendingOut(copy);
+                        Alert.alert("Request error", e?.message || String(e));
+                      }
+                    }}
+                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: P.primary }}
+                  >
+                    <Text style={{ color: P.text, fontFamily: fontHeavy }}>Add</Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          })
+        )}
+      </View>
+    );
+  }
 }
 
 /* ===== toggle component ===== */

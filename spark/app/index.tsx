@@ -1,3 +1,4 @@
+// app/index.tsx
 import React, { useEffect, useMemo, useRef, useState, memo } from "react";
 import {
   View,
@@ -12,8 +13,11 @@ import {
   useWindowDimensions,
   SafeAreaView,
   Image,
+  KeyboardAvoidingView,
+  ScrollView,
 } from "react-native";
 import type { ImageSourcePropType } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Card from "@/components/Card";
 import Button from "@/components/Button";
 import { useTheme } from "@/providers/ThemeProvider";
@@ -22,23 +26,15 @@ import { useRouter } from "expo-router";
 import { supabase } from "@/lib/supabase";
 import "./globals.css";
 import * as Crypto from "expo-crypto";
+import { askAndPersistLocation } from "@/data/location";
 
 type Mode = "signin" | "signup" | "forgot";
 
-// background assets (place these files)
+// background assets
 const heroDesktop = require("@/assets/images/spark-hero-desktop.png");
 const heroMobile = require("@/assets/images/spark-hero-mobile.png");
 
-
-useEffect(() => {
-  supabase.auth.getSession().then(({ data }) => {
-    supabase.realtime.setAuth(data.session?.access_token ?? "");
-  });
-  const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-    supabase.realtime.setAuth(session?.access_token ?? "");
-  });
-  return () => sub?.subscription?.unsubscribe?.();
-}, []);
+const LOC_ONBOARD_KEY = "loc_prompt_v1";
 
 /* =========================
    Helpers (derive + availability)
@@ -46,7 +42,6 @@ useEffect(() => {
 const normalize = (s: string) => s.trim();
 
 function dicebear(seed: string) {
-  // tweak style to whatever you like: fun-emoji, thumbs, initials, etc.
   return `https://api.dicebear.com/8.x/fun-emoji/png?size=128&seed=${encodeURIComponent(seed)}`;
 }
 
@@ -55,13 +50,11 @@ function toTitle(s: string) {
   const t = s.replace(/[_\-\.]+/g, " ");
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
+
 async function gravatar(email?: string | null) {
   if (!email) return null;
   try {
-    const md5 = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.MD5,
-      email.trim().toLowerCase()
-    );
+    const md5 = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.MD5, email.trim().toLowerCase());
     return `https://www.gravatar.com/avatar/${md5}?d=identicon`;
   } catch {
     return null;
@@ -75,14 +68,12 @@ async function checkUsernameAvailable(username: string) {
   const { count, error } = await supabase
     .from("profiles")
     .select("id", { count: "exact", head: true })
-    .eq("username", u); // citext → case-insensitive
+    .eq("username", u);
   if (error) throw error;
   return (count ?? 0) === 0;
 }
 
-/** Check display-name availability (expects RPC display_name_exists(p_name text) boolean).
- * Falls back to a best-effort ilike check if RPC is missing.
- */
+/** Check display-name availability (optional RPC) */
 async function checkDisplayNameAvailable(displayName: string) {
   const d = normalize(displayName);
   if (!d) return false;
@@ -90,20 +81,17 @@ async function checkDisplayNameAvailable(displayName: string) {
   const { data, error } = await supabase.rpc("display_name_exists", { p_name: d });
   if (!error) return !data;
 
-  // Fallback if RPC isn't present (less strict than the DB index but OK as a precheck)
   const { count, error: e2 } = await supabase
     .from("profiles")
     .select("id", { count: "exact", head: true })
-    .ilike("display_name", d); // not trimming/normalizing like the index, but good enough for UX
+    .ilike("display_name", d);
   if (e2) throw e2;
   return (count ?? 0) === 0;
 }
 
-/** Idempotent: creates/patches profile using auth metadata first (works with/without triggers). */
+/** Idempotent: creates/patches profile using auth metadata first */
 async function ensureProfile(params: { userId: string; email?: string | null; username?: string | null }) {
   const { userId, email, username } = params;
-
-  // read auth user + metadata
   const { data: me } = await supabase.auth.getUser();
   const meta = (me.user?.user_metadata ?? {}) as Record<string, any>;
   const metaName = (meta.display_name as string | undefined) || undefined;
@@ -114,13 +102,11 @@ async function ensureProfile(params: { userId: string; email?: string | null; us
   const derivedDisplay =
     (metaName || (email ? (email.split("@")[0] ?? "").replace(/[_\-\.]+/g, " ") : derivedUsername)).trim();
 
-  // Cross-platform default avatar (deterministic, no Node 'crypto')
-  const defaultAvatar = dicebear(userId); // e.g. fun-emoji; change style if you like
+  const defaultAvatar = dicebear(userId);
 
-  // fetch existing
   const { data: existing, error: selErr } = await supabase
     .from("profiles")
-    .select("id, username, display_name, avatar_url, theme, notifications_enabled")
+    .select("id, username, display_name, avatar_url, theme, notifications_enabled, location_enabled")
     .eq("id", userId)
     .maybeSingle();
   if (selErr) throw selErr;
@@ -132,6 +118,7 @@ async function ensureProfile(params: { userId: string; email?: string | null; us
     if (!existing.avatar_url) patch.avatar_url = defaultAvatar;
     if (existing.theme == null) patch.theme = "ELECTRIC_SUNSET";
     if (existing.notifications_enabled == null) patch.notifications_enabled = true;
+    if (existing.location_enabled == null) patch.location_enabled = false;
 
     if (Object.keys(patch).length) {
       const { error: updErr } = await supabase.from("profiles").update(patch).eq("id", userId);
@@ -147,6 +134,7 @@ async function ensureProfile(params: { userId: string; email?: string | null; us
     avatar_url: defaultAvatar,
     theme: "ELECTRIC_SUNSET",
     notifications_enabled: true,
+    location_enabled: false,
   });
   if (insErr) throw insErr;
 }
@@ -168,9 +156,22 @@ export default function AuthScreen() {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [username, setUsername] = useState(""); // used for both username + display name by default
+  const [username, setUsername] = useState("");
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string; global?: string }>({});
+
+  // make Realtime auth token follow session (keep inside component to avoid invalid-hook-call elsewhere)
+  useEffect(() => {
+    let sub: any;
+    supabase.auth.getSession().then(({ data }) => {
+      supabase.realtime.setAuth(data.session?.access_token ?? "");
+    });
+    const _sub = supabase.auth.onAuthStateChange((_evt, session) => {
+      supabase.realtime.setAuth(session?.access_token ?? "");
+    });
+    sub = _sub?.data?.subscription;
+    return () => sub?.unsubscribe?.();
+  }, []);
 
   // entrance anim
   const cardScale = useRef(new Animated.Value(1)).current;
@@ -202,6 +203,15 @@ export default function AuthScreen() {
     return Object.keys(e).length === 0;
   }
 
+  async function maybeAskLocationOnce(userId: string) {
+    try {
+      const already = await AsyncStorage.getItem(LOC_ONBOARD_KEY);
+      if (already) return;
+      await askAndPersistLocation(userId); // platform-native prompts
+      await AsyncStorage.setItem(LOC_ONBOARD_KEY, "1");
+    } catch {}
+  }
+
   async function handleSubmit() {
     if (!validate()) return;
     try {
@@ -213,11 +223,8 @@ export default function AuthScreen() {
 
         const { data: me } = await supabase.auth.getUser();
         if (me.user?.id) {
-          await ensureProfile({
-            userId: me.user.id,
-            email: me.user.email,
-            username: null,
-          });
+          await ensureProfile({ userId: me.user.id, email: me.user.email, username: null });
+          await maybeAskLocationOnce(me.user.id);
         }
         router.replace("./(tabs)/discover");
         return;
@@ -225,38 +232,25 @@ export default function AuthScreen() {
 
       if (mode === "signup") {
         const uname = username.trim();
-        const displayCandidate = uname; // if you add a separate "Display name" field, use it here
+        const displayCandidate = uname;
 
-        // pre-checks
         const okUser = await checkUsernameAvailable(uname);
         if (!okUser) throw new Error("Username already exists.");
-
         const okDisplay = await checkDisplayNameAvailable(displayCandidate);
         if (!okDisplay) throw new Error("Display name already exists.");
 
-        // sign up with metadata (Option B triggers will pick this up too)
         const { error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: {
-            data: {
-              username: uname,
-              display_name: displayCandidate,
-            },
-          },
+          options: { data: { username: uname, display_name: displayCandidate } },
         });
         if (error) throw error;
 
-        // if a session exists immediately (e.g., email confirm off), create/patch profile now
         const { data: me } = await supabase.auth.getUser();
         if (me.user?.id) {
-          await ensureProfile({
-            userId: me.user.id,
-            email: email.trim(),
-            username: uname,
-          });
-          // keep metadata aligned (optional)
+          await ensureProfile({ userId: me.user.id, email: email.trim(), username: uname });
           await supabase.auth.updateUser({ data: { username: uname, display_name: displayCandidate } });
+          await maybeAskLocationOnce(me.user.id);
         }
 
         Alert.alert("Verify your email", "We sent you a confirmation email.");
@@ -264,7 +258,6 @@ export default function AuthScreen() {
         return;
       }
 
-      // forgot
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
       if (error) throw error;
       Alert.alert("Email sent", "Check your inbox for a reset link.");
@@ -277,10 +270,9 @@ export default function AuthScreen() {
   }
 
   const inputBase = {
-    backgroundColor: theme.colors.card,
-    color: theme.colors.text.primary,
-    borderColor:
-      errors.email || errors.password || errors.global ? theme.danger[500] : theme.colors.border,
+    backgroundColor: "#111827",
+    color: "#F8FAFC",
+    borderColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
@@ -294,158 +286,136 @@ export default function AuthScreen() {
       {Platform.OS === "web" ? (
         <WebBackground source={hero} />
       ) : (
-        <ImageBackground
-          source={hero}
-          blurRadius={18}
-          resizeMode="cover"
-          style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
-        />
+        <ImageBackground source={hero} blurRadius={18} resizeMode="cover" style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }} />
       )}
-
       <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.38)" }} />
 
       <SafeAreaView style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: PADDING, paddingTop: isMobile ? 8 : 16, paddingBottom: 8 }}>
-          <Text style={{ color: "#fff", fontSize: isMobile ? 26 : 30, fontWeight: "800", letterSpacing: 0.5 }}>
-            Spark
-          </Text>
+          <Text style={{ color: "#fff", fontSize: isMobile ? 26 : 30, fontWeight: "800", letterSpacing: 0.5 }}>Spark</Text>
           <Text style={{ color: "rgba(255,255,255,0.75)", marginTop: 2 }}>Sign in to continue</Text>
         </View>
 
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: PADDING }}>
-          <Animated.View
-            style={{
-              width: "100%",
-              maxWidth: MAX_W,
-              transform: [{ scale: cardScale }],
-              opacity: cardOpacity,
-            }}
-          >
-            <Card
-              variant="elevated"
-              radius="xl"
-              style={{
-                padding: isMobile ? 16 : 20,
-                backgroundColor: "rgba(18,19,26,0.72)",
-                borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.08)",
-                ...(Platform.OS === "web" ? { backdropFilter: "blur(10px)" as any } : {}),
-              }}
-            >
-              <Segmented
-                value={mode}
-                onChange={setMode}
-                options={[
-                  { key: "signin", label: "Sign in" },
-                  { key: "signup", label: "Sign up" },
-                  { key: "forgot", label: "Forgot" },
-                ]}
-              />
-
-              <Text style={{ color: "#fff", fontSize: 22, fontWeight: "700", marginBottom: 8 }}>{title}</Text>
-              <Text style={{ color: "rgba(255,255,255,0.7)", marginBottom: 12 }}>
-                {mode === "signup"
-                  ? "Pick a unique username — this is public and others will see it."
-                  : mode === "forgot"
-                  ? "Enter your account email and we'll send a reset link."
-                  : "Use your email and password."}
-              </Text>
-
-              {!!errors.global && (
-                <View
-                  style={{
-                    backgroundColor: theme.danger[500] + "22",
-                    borderRadius: 12,
-                    padding: 10,
-                    marginBottom: 8,
-                    borderWidth: 1,
-                    borderColor: theme.danger[500],
-                  }}
-                >
-                  <Text style={{ color: theme.danger[500] }}>{errors.global}</Text>
-                </View>
-              )}
-
-              <View style={{ gap: 12 }}>
-                {mode === "signup" && (
-                  <View>
-                    <Label text="Username (public)" />
-                    <TextInput
-                      value={username}
-                      onChangeText={setUsername}
-                      placeholder="e.g. spark_dev"
-                      placeholderTextColor="rgba(255,255,255,0.55)"
-                      autoCapitalize="none"
-                      style={inputBase}
-                    />
-                  </View>
-                )}
-
-                <View>
-                  <Label text="Email" />
-                  <TextInput
-                    value={email}
-                    onChangeText={(t) => {
-                      setEmail(t);
-                      if (errors.email) setErrors((p) => ({ ...p, email: undefined }));
-                    }}
-                    placeholder="you@example.com"
-                    placeholderTextColor="rgba(255,255,255,0.55)"
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    style={inputBase}
-                  />
-                  {!!errors.email && <FieldError text={errors.email} />}
-                </View>
-
-                {mode !== "forgot" && (
-                  <View>
-                    <Label text="Password" />
-                    <TextInput
-                      value={password}
-                      onChangeText={(t) => {
-                        setPassword(t);
-                        if (errors.password) setErrors((p) => ({ ...p, password: undefined }));
-                      }}
-                      placeholder="••••••••"
-                      placeholderTextColor="rgba(255,255,255,0.55)"
-                      secureTextEntry
-                      style={inputBase}
-                    />
-                    {!!errors.password && <FieldError text={errors.password} />}
-                  </View>
-                )}
-
-                <Button
-                  title={
-                    busy
-                      ? ""
-                      : mode === "signin"
-                      ? "Sign in"
-                      : mode === "signup"
-                      ? "Create account"
-                      : "Send reset email"
-                  }
-                  onPress={handleSubmit}
-                  loading={busy}
+        {/* Keyboard-safe, scrollable form */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: PADDING }}>
+            <Animated.View style={{ width: "100%", maxWidth: MAX_W, transform: [{ scale: cardScale }], opacity: cardOpacity }}>
+              <Card
+                variant="elevated"
+                radius="xl"
+                style={{
+                  padding: isMobile ? 16 : 20,
+                  backgroundColor: "rgba(18,19,26,0.72)",
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.08)",
+                  ...(Platform.OS === "web" ? { backdropFilter: "blur(10px)" as any } : {}),
+                }}
+              >
+                <Segmented
+                  value={mode}
+                  onChange={setMode}
+                  options={[
+                    { key: "signin", label: "Sign in" },
+                    { key: "signup", label: "Sign up" },
+                    { key: "forgot", label: "Forgot" },
+                  ]}
                 />
 
-                {mode === "signin" && (
-                  <View style={{ gap: 8 }}>
-                    <Button title="Forgot password?" variant="ghost" tone="neutral" onPress={() => setMode("forgot")} />
-                    <Button title="Need an account? Sign up" variant="ghost" tone="neutral" onPress={() => setMode("signup")} />
+                <Text style={{ color: "#fff", fontSize: 22, fontWeight: "700", marginBottom: 8 }}>{title}</Text>
+                <Text style={{ color: "rgba(255,255,255,0.7)", marginBottom: 12 }}>
+                  {mode === "signup"
+                    ? "Pick a unique username — this is public and others will see it."
+                    : mode === "forgot"
+                    ? "Enter your account email and we'll send a reset link."
+                    : "Use your email and password."}
+                </Text>
+
+                {!!errors.global && (
+                  <View
+                    style={{
+                      backgroundColor: theme.danger[500] + "22",
+                      borderRadius: 12,
+                      padding: 10,
+                      marginBottom: 8,
+                      borderWidth: 1,
+                      borderColor: theme.danger[500],
+                    }}
+                  >
+                    <Text style={{ color: theme.danger[500] }}>{errors.global}</Text>
                   </View>
                 )}
-                {mode === "signup" && (
-                  <Button title="Have an account? Sign in" variant="ghost" tone="neutral" onPress={() => setMode("signin")} />
-                )}
-                {mode === "forgot" && (
-                  <Button title="Back to sign in" variant="ghost" tone="neutral" onPress={() => setMode("signin")} />
-                )}
-              </View>
-            </Card>
-          </Animated.View>
-        </View>
+
+                <View style={{ gap: 12 }}>
+                  {mode === "signup" && (
+                    <View>
+                      <Label text="Username (public)" />
+                      <TextInput
+                        value={username}
+                        onChangeText={setUsername}
+                        placeholder="e.g. spark_dev"
+                        placeholderTextColor="rgba(255,255,255,0.55)"
+                        autoCapitalize="none"
+                        style={inputBase}
+                      />
+                    </View>
+                  )}
+
+                  <View>
+                    <Label text="Email" />
+                    <TextInput
+                      value={email}
+                      onChangeText={(t) => {
+                        setEmail(t);
+                        if (errors.email) setErrors((p) => ({ ...p, email: undefined }));
+                      }}
+                      placeholder="you@example.com"
+                      placeholderTextColor="rgba(255,255,255,0.55)"
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      style={inputBase}
+                    />
+                    {!!errors.email && <FieldError text={errors.email} />}
+                  </View>
+
+                  {mode !== "forgot" && (
+                    <View>
+                      <Label text="Password" />
+                      <TextInput
+                        value={password}
+                        onChangeText={(t) => {
+                          setPassword(t);
+                          if (errors.password) setErrors((p) => ({ ...p, password: undefined }));
+                        }}
+                        placeholder="••••••••"
+                        placeholderTextColor="rgba(255,255,255,0.55)"
+                        secureTextEntry
+                        style={inputBase}
+                      />
+                      {!!errors.password && <FieldError text={errors.password} />}
+                    </View>
+                  )}
+
+                  <Button
+                    title={busy ? "" : mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send reset email"}
+                    onPress={handleSubmit}
+                    loading={busy}
+                  />
+
+                  {mode === "signin" && (
+                    <View style={{ gap: 8 }}>
+                      <Button title="Forgot password?" variant="ghost" tone="neutral" onPress={() => setMode("forgot")} />
+                      <Button title="Need an account? Sign up" variant="ghost" tone="neutral" onPress={() => setMode("signup")} />
+                    </View>
+                  )}
+                  {mode === "signup" && (
+                    <Button title="Have an account? Sign in" variant="ghost" tone="neutral" onPress={() => setMode("signin")} />
+                  )}
+                  {mode === "forgot" && <Button title="Back to sign in" variant="ghost" tone="neutral" onPress={() => setMode("signin")} />}
+                </View>
+              </Card>
+            </Animated.View>
+          </ScrollView>
+        </KeyboardAvoidingView>
 
         <View style={{ padding: 12, alignItems: "center" }}>
           <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, textAlign: "center", maxWidth: 640 }}>
@@ -457,7 +427,7 @@ export default function AuthScreen() {
   );
 }
 
-/** Fixed, memoized blurred background for web (prevents flashing on clicks) */
+/** Fixed, memoized blurred background for web */
 const WebBackground = memo(function WebBackground({ source }: { source: ImageSourcePropType }) {
   return (
     <Image
