@@ -12,7 +12,7 @@ const {
   YELP_API_KEY,              // required
   DEFAULT_CURRENCY = "CAD",
 } = process.env;
-const PORT = process.env.PORT || 8787;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server listening on :${PORT}`));
 
 if (!YELP_API_KEY) {
