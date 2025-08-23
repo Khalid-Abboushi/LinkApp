@@ -9,10 +9,11 @@ app.use(cors());
 app.use(express.json());
 
 const {
-  PORT = 8787,
   YELP_API_KEY,              // required
   DEFAULT_CURRENCY = "CAD",
 } = process.env;
+const PORT = process.env.PORT || 8787;
+app.listen(PORT, () => console.log(`Server listening on :${PORT}`));
 
 if (!YELP_API_KEY) {
   console.error("❌ Missing YELP_API_KEY in .env");
