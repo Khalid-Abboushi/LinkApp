@@ -20,7 +20,13 @@ export type AICard = {
   bookingUrl?: string;
 };
 
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL!; // e.g. http://localhost:8787
+
+export const API_BASE =
+  process.env.EXPO_PUBLIC_API_BASE ||
+  "http://localhost:8787";           // local dev
+
+// when deployed, set EXPO_PUBLIC_API_BASE in your app env to:
+// https://<your-railway-subdomain>.up.railway.app
 
 
 
