@@ -243,19 +243,27 @@ export default function Discover() {
 
   // On mount: ask location + load “popular near me”
   useEffect(() => {
-  (async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") { setLocLabel("Location off"); return; }
-      const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const { latitude:lat, longitude:lng } = p.coords;
-      setCoords({ lat, lng });
-      ...
-    } catch {
-      setLocLabel("Location unavailable");
-    }
-  })();
-}, []);
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") { setLocLabel("Location off"); return; }
+        const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const { latitude:lat, longitude:lng } = p.coords;
+        setCoords({ lat, lng });
+
+        // nicer chip
+        try {
+          const [place] = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+          if (place?.city) setLocLabel(`${place.city} • Popular`);
+        } catch {}
+
+        // first load — popular places (real Yelp)
+        await fetchFromYelp({ lat, lng, prompt: "popular restaurants bars fun", maxCards: 6 });
+      } catch {
+        setLocLabel("Location unavailable");
+      }
+    })();
+  }, []);
 
   // Build a Yelp query from search + presets + categories
   function buildPrompt() {
@@ -290,6 +298,10 @@ export default function Discover() {
     abortRef.current = controller;
 
     try {
+      if (!coords) {
+  setAiError("Location required");
+  return;
+}
       const raw = await generateAICards({
         prompt: buildPrompt(),
         lat: coords.lat,
