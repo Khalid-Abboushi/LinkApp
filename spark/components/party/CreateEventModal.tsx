@@ -13,6 +13,7 @@ import {
   Image,
   Keyboard,
   TextInputProps,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -50,9 +51,22 @@ const fontSans = Platform.select({
 /* =========================
    Small external components (stable types)
    ========================= */
-const Label = memo(function Label({ text, P }: { text: string; P: AppPalette }) {
+const Label = memo(function Label({
+  text,
+  P,
+}: {
+  text: string;
+  P: AppPalette;
+}) {
   return (
-    <Text style={{ color: P.textMuted, fontFamily: fontSans, fontSize: 12, marginBottom: 6 }}>
+    <Text
+      style={{
+        color: P.textMuted,
+        fontFamily: fontSans,
+        fontSize: 12,
+        marginBottom: 6,
+      }}
+    >
       {text}
     </Text>
   );
@@ -122,6 +136,24 @@ export type InitialEvent = {
 };
 
 /* =========================
+   Geocoding helper (Geoapify)
+   ========================= */
+async function geocodeAddress(address: string, apiKey: string) {
+  const url = `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(
+    address
+  )}&limit=1&apiKey=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Geocode failed: ${res.status}`);
+  const data = await res.json();
+  const f = data?.features?.[0];
+  if (!f) throw new Error("No geocode results");
+  const [lng, lat] = f.geometry?.coordinates ?? [];
+  const label =
+    f.properties?.formatted || f.properties?.address_line1 || address;
+  return { lat: Number(lat), lng: Number(lng), label };
+}
+
+/* =========================
    Component
    ========================= */
 export default function CreateEventModal({
@@ -169,6 +201,7 @@ export default function CreateEventModal({
   const [dress, setDress] = useState<number>(2);
 
   const [submitting, setSubmitting] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
 
   /* ====== Prefill: run once per open/target ====== */
   const editKey = editing?.id ?? initialEvent?.id ?? null;
@@ -196,18 +229,22 @@ export default function CreateEventModal({
           : ""
       );
       setMinSize(
-        typeof src.min_group_size === "number" && !Number.isNaN(src.min_group_size)
+        typeof src.min_group_size === "number" &&
+          !Number.isNaN(src.min_group_size)
           ? String(src.min_group_size)
           : "1"
       );
       setMaxSize(
-        typeof src.max_group_size === "number" && !Number.isNaN(src.max_group_size)
+        typeof src.max_group_size === "number" &&
+          !Number.isNaN(src.max_group_size)
           ? String(src.max_group_size)
           : "12"
       );
       setHero(src.hero_url ?? null);
       setDress(
-        typeof src.dress_code === "number" && src.dress_code >= 0 ? src.dress_code : 2
+        typeof src.dress_code === "number" && src.dress_code >= 0
+          ? src.dress_code
+          : 2
       );
     } else {
       setName("");
@@ -254,7 +291,8 @@ export default function CreateEventModal({
     if (!/^\d+(\.\d+)?$/.test(cost)) return "Cost must be a number.";
     if (!/^\d+$/.test(minSize) || !/^\d+$/.test(maxSize))
       return "Group sizes must be whole numbers.";
-    if (parseInt(minSize) > parseInt(maxSize)) return "Min group size cannot exceed Max.";
+    if (parseInt(minSize) > parseInt(maxSize))
+      return "Min group size cannot exceed Max.";
     return null;
   };
 
@@ -265,21 +303,50 @@ export default function CreateEventModal({
       return;
     }
     setSubmitting(true);
+    setGeocoding(true);
     try {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const uid = user?.id;
       if (!uid) {
         alert("Sign in required.");
         return;
       }
 
       const uploaded = await uploadIfNeeded();
+
+      // Geocode the address (best-effort)
+      let location_lat: number | null = null;
+      let location_lng: number | null = null;
+      let normalizedLocationName = locationName.trim() || null;
+
+      try {
+        const apiKey = process.env.EXPO_PUBLIC_GEOAPIFY_KEY;
+        if (!apiKey) {
+          console.warn(
+            "Missing EXPO_PUBLIC_GEOAPIFY_KEY; saving without lat/lng."
+          );
+        } else if (address.trim()) {
+          const gc = await geocodeAddress(address.trim(), apiKey);
+          location_lat = gc.lat;
+          location_lng = gc.lng;
+          if (!normalizedLocationName) normalizedLocationName = gc.label;
+        }
+      } catch (e) {
+        console.warn("Geocoding failed; saving without lat/lng:", e);
+      } finally {
+        setGeocoding(false);
+      }
+
       const payload: any = {
         party_id: partyId,
         name: name.trim(),
         description: description.trim(),
-        location_name: locationName.trim() || null,
+        location_name: normalizedLocationName,
         location_address: address.trim(),
+        location_lat,
+        location_lng,
         cost_amount: Number(cost),
         currency,
         cost_mode: "per_person",
@@ -294,7 +361,10 @@ export default function CreateEventModal({
         (editing && editing.id) || (initialEvent && initialEvent.id) || null;
 
       if (isEdit && editId) {
-        const { error } = await supabase.from("events").update(payload).eq("id", editId);
+        const { error } = await supabase
+          .from("events")
+          .update(payload)
+          .eq("id", editId);
         if (error) throw error;
         onSaved?.(editId);
       } else {
@@ -313,6 +383,7 @@ export default function CreateEventModal({
       alert(e?.message ?? "Failed to save.");
     } finally {
       setSubmitting(false);
+      setGeocoding(false);
     }
   };
 
@@ -337,9 +408,21 @@ export default function CreateEventModal({
 
   /* ====== UI ====== */
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
       {/* Backdrop */}
-      <View style={{ position: "absolute", inset: 0, backgroundColor: "rgba(0,0,0,0.5)" }} />
+      <View
+        style={{
+          position: "absolute",
+          inset: 0,
+          backgroundColor: "rgba(0,0,0,0.5)",
+        }}
+      />
 
       {/* Centered dialog */}
       <View
@@ -391,7 +474,11 @@ export default function CreateEventModal({
           >
             <ScrollView
               style={{ flex: 1 }}
-              contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}
+              contentContainerStyle={{
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                gap: 10,
+              }}
               keyboardShouldPersistTaps="always"
               showsVerticalScrollIndicator
             >
@@ -410,7 +497,11 @@ export default function CreateEventModal({
                 }}
               >
                 {hero ? (
-                  <Image source={{ uri: hero }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                  <Image
+                    source={{ uri: hero }}
+                    style={{ width: "100%", height: "100%" }}
+                    resizeMode="cover"
+                  />
                 ) : (
                   <Text style={{ color: P.textMuted }}>No image selected</Text>
                 )}
@@ -427,12 +518,19 @@ export default function CreateEventModal({
                   backgroundColor: P.surface,
                 }}
               >
-                <Text style={{ color: P.text }}>{isEdit ? "Change" : "Choose"}</Text>
+                <Text style={{ color: P.text }}>
+                  {isEdit ? "Change" : "Choose"}
+                </Text>
               </TouchableOpacity>
 
               {/* Name */}
               <Label text="Name*" P={P} />
-              <ModalInput P={P} placeholder="Event name" value={name} onChangeText={setName} />
+              <ModalInput
+                P={P}
+                placeholder="Event name"
+                value={name}
+                onChangeText={setName}
+              />
 
               {/* Description */}
               <Label text="Description*" P={P} />
@@ -447,11 +545,21 @@ export default function CreateEventModal({
 
               {/* Location name */}
               <Label text="Location Name" P={P} />
-              <ModalInput P={P} placeholder="Venue / Place" value={locationName} onChangeText={setLocationName} />
+              <ModalInput
+                P={P}
+                placeholder="Venue / Place"
+                value={locationName}
+                onChangeText={setLocationName}
+              />
 
               {/* Address */}
               <Label text="Address*" P={P} />
-              <ModalInput P={P} placeholder="123 Main St..." value={address} onChangeText={setAddress} />
+              <ModalInput
+                P={P}
+                placeholder="123 Main St..."
+                value={address}
+                onChangeText={setAddress}
+              />
 
               {/* Cost */}
               <Label text="Cost per Person*" P={P} />
@@ -487,11 +595,25 @@ export default function CreateEventModal({
 
               {/* Dress code simple dots */}
               <View style={{ marginTop: 6 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
-                  <Text style={{ color: P.textMuted, fontSize: 12 }}>Least</Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    marginBottom: 6,
+                  }}
+                >
+                  <Text style={{ color: P.textMuted, fontSize: 12 }}>
+                    Least
+                  </Text>
                   <Text style={{ color: P.textMuted, fontSize: 12 }}>Most</Text>
                 </View>
-                <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: 14,
+                    alignItems: "center",
+                  }}
+                >
                   {[0, 1, 2, 3, 4].map((i) => (
                     <TouchableOpacity
                       key={i}
@@ -506,11 +628,34 @@ export default function CreateEventModal({
                       }}
                     />
                   ))}
-                  <Text style={{ marginLeft: 8, color: P.text, fontFamily: fontHeavy }}>
+                  <Text
+                    style={{
+                      marginLeft: 8,
+                      color: P.text,
+                      fontFamily: fontHeavy,
+                    }}
+                  >
                     {["Comfort", "Casual", "Smart", "Dressy", "Fancy"][dress]}
                   </Text>
                 </View>
               </View>
+
+              {/* Geocoding status */}
+              {submitting && geocoding && (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    marginTop: 8,
+                  }}
+                >
+                  <ActivityIndicator size="small" />
+                  <Text style={{ color: P.textMuted, fontFamily: fontSans }}>
+                    Geocoding address…
+                  </Text>
+                </View>
+              )}
             </ScrollView>
           </KeyboardAvoidingView>
 
@@ -550,10 +695,17 @@ export default function CreateEventModal({
                 borderWidth: 1,
                 borderColor: `${P.primary}AA`,
                 backgroundColor: `${P.primary}26`,
+                opacity: submitting ? 0.8 : 1,
               }}
             >
               <Text style={{ color: "#F6F9FF", fontFamily: fontHeavy }}>
-                {submitting ? (isEdit ? "Saving…" : "Creating…") : isEdit ? "Save" : "Create"}
+                {submitting
+                  ? isEdit
+                    ? "Saving…"
+                    : "Creating…"
+                  : isEdit
+                  ? "Save"
+                  : "Create"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -602,7 +754,9 @@ export function FloatingCreateEventCTA({
         }}
       >
         <Ionicons name="add" size={16} color="#F6F9FF" />
-        <Text style={{ color: "#F6F9FF", fontFamily: fontHeavy }}>Create Event</Text>
+        <Text style={{ color: "#F6F9FF", fontFamily: fontHeavy }}>
+          Create Event
+        </Text>
       </TouchableOpacity>
     </View>
   );
