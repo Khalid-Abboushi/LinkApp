@@ -19,11 +19,7 @@ export type AICard = {
   mapsUrl?: string;
   bookingUrl?: string;
   distanceMeters?: number;
-  distanceMinutes?: number;
-  distanceText?: string;
-  rating?: number;
-  reviewCount?: number;
-  priceLabel?: string;
+  
 
   // NEW: Location coordinates
   lat?: number;
@@ -41,6 +37,8 @@ export interface GenerateParams {
   radiusMeters?: number;
   currency?: string;
   signal?: AbortSignal;
+  maxMinutes?: number;  // cutoff for ETA filtering
+  mode?: "auto" | "drive" | "walk" | "bike"; // travel mode
   // NEW: Option to include location extraction from prompt
   extractLocations?: boolean;
 }
