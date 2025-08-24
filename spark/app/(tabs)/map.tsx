@@ -1,7 +1,9 @@
-// app/(tabs)/map.tsx — compact version (≤1000 lines)
+// app/(tabs)/map.tsx — complete version with pickup routing
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import Feather from "react-native-vector-icons/Feather";
+import { Platform, Linking } from "react-native";
+
 import {
   ActivityIndicator,
   Alert,
@@ -17,6 +19,38 @@ import {
 import MapView, { Marker, Polyline } from "react-native-maps";
 import * as Location from "expo-location";
 import { supabase } from "@/lib/supabase";
+
+const startNavigation = (lat: number, lng: number, label = "Destination") => {
+  if (Platform.OS === "ios") {
+    // Apple Maps
+    Linking.openURL(`maps://?daddr=${lat},${lng}&dirflg=d`);
+  } else {
+    // Google Maps (Android)
+    Linking.openURL(`google.navigation:q=${lat},${lng}&mode=d`);
+  }
+};
+
+// Function to start navigation with pickup stop
+const startNavigationWithPickup = (
+  pickupLat: number,
+  pickupLng: number,
+  destLat: number,
+  destLng: number,
+  pickupLabel = "Pickup",
+  destLabel = "Destination"
+) => {
+  if (Platform.OS === "ios") {
+    // Apple Maps with waypoint
+    Linking.openURL(
+      `maps://?daddr=${destLat},${destLng}&dirflg=d&saddr=${pickupLat},${pickupLng}`
+    );
+  } else {
+    // Google Maps with waypoint
+    Linking.openURL(
+      `google.navigation:q=${destLat},${destLng}&waypoints=${pickupLat},${pickupLng}&mode=d`
+    );
+  }
+};
 
 // ---------- Config & Types ----------
 const { width } = Dimensions.get("window");
@@ -116,6 +150,14 @@ const UserMarker = ({ needsRide }: { needsRide?: boolean }) => (
   </View>
 );
 
+const PickupMarker = () => (
+  <View style={styles.markerWrap}>
+    <View style={[styles.pin, styles.pinPickup]}>
+      <Text style={styles.pinIcon}>🚗</Text>
+    </View>
+  </View>
+);
+
 // ---------- Helpers ----------
 const decodePolyline = (str: string): LatLng[] => {
   let index = 0,
@@ -172,6 +214,8 @@ const fmtTMinus = (iso?: string) => {
 const colorAt = (key: string, i: number) =>
   key === "user"
     ? "#007AFF"
+    : key.startsWith("pickup-")
+    ? "#EF4444"
     : ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FECA57", "#FF9FF3"][i % 6];
 
 // ---------- Main Screen ----------
@@ -194,6 +238,14 @@ export default function MapScreen() {
   const [myPickupRequest, setMyPickupRequest] = useState<PickupRequest | null>(
     null
   );
+
+  // NEW: Pickup routing state
+  const [pickupRoutes, setPickupRoutes] = useState<Record<string, LatLng[]>>(
+    {}
+  );
+  const [pickupRouteData, setPickupRouteData] = useState<
+    Record<string, RouteData>
+  >({});
 
   // UI
   const [showRoutesModal, setShowRoutesModal] = useState(false);
@@ -260,7 +312,7 @@ export default function MapScreen() {
       .from("events")
       .select("*")
       .in("party_id", partyIds)
-      .eq("active", true); // 🚦 only active events
+      .eq("active", true); // only active events
 
     if (error || !data) {
       console.error("Error loading events:", error);
@@ -364,7 +416,7 @@ export default function MapScreen() {
     const mapped: PickupRequest[] = (data || []).map((r: any) => ({
       id: r.id,
       requesterId: r.requester_id,
-      requesterName: r.requester?.username || r.requester_id, // ✅ username direct from profile
+      requesterName: r.requester?.username || r.requester_id,
       requesterLocation: {
         latitude: parseFloat(r.latitude),
         longitude: parseFloat(r.longitude),
@@ -373,8 +425,8 @@ export default function MapScreen() {
       eventName: r.events?.name || "Unknown event",
       timestamp: new Date(r.created_at),
       status: r.status,
-      acceptedBy: r.driver?.id || r.accepted_by, // ✅ nested or fallback
-      acceptedByName: r.driver?.username || r.accepted_by, // ✅ driver username
+      acceptedBy: r.driver?.id || r.accepted_by,
+      acceptedByName: r.driver?.username || r.accepted_by,
     }));
 
     const unique = Object.values(
@@ -385,9 +437,10 @@ export default function MapScreen() {
       }, {} as Record<string, PickupRequest>)
     );
 
-    setPickupRequests(unique); // ✅ all requests (for friends)
-    setMyPickupRequest(unique.find((r) => r.requesterId === userId) || null); // ✅ only yours
+    setPickupRequests(unique);
+    setMyPickupRequest(unique.find((r) => r.requesterId === userId) || null);
   };
+
   useEffect(() => {
     if (!userId || userParties.length === 0) return;
 
@@ -397,7 +450,7 @@ export default function MapScreen() {
         "postgres_changes",
         { event: "*", schema: "public", table: "events" },
         () => {
-          loadPartyEvents(); // Always reload with correct filters
+          loadPartyEvents();
         }
       )
       .subscribe();
@@ -433,7 +486,7 @@ export default function MapScreen() {
     return () => {
       ch.unsubscribe();
     };
-  }, [userId]); // re-subscribe if user changes
+  }, [userId]);
 
   // ---------- Routing ----------
   const accurateRoute = async (
@@ -545,7 +598,6 @@ export default function MapScreen() {
 
   const requestPickup = async (e: Event) => {
     try {
-      // ✅ Always fetch the authenticated user directly from Supabase
       const {
         data: { user },
         error: userError,
@@ -561,11 +613,10 @@ export default function MapScreen() {
         return;
       }
 
-      // ✅ Insert using auth.uid() value (user.id)
       const { data, error } = await supabase
         .from("pickup_requests")
         .insert({
-          requester_id: user.id, // <-- matches RLS policy exactly
+          requester_id: user.id,
           latitude: location.latitude,
           longitude: location.longitude,
           event_id: e.id,
@@ -598,23 +649,24 @@ export default function MapScreen() {
       Alert.alert("Error", "Something went wrong.");
     }
   };
+
   const myAcceptedPickups = useMemo(
     () =>
       pickupRequests.filter(
         (r) =>
-          String(r.acceptedBy) === String(userId) && r.requesterId !== userId // 🚫 don’t count your own
+          String(r.acceptedBy) === String(userId) && r.requesterId !== userId
       ),
     [pickupRequests, userId]
   );
 
-  // accept a pickup
+  // Enhanced accept pickup with routing
   const acceptPickup = async (req: PickupRequest) => {
     console.log("acceptPickup -> req.id:", req.id, "status:", req.status);
     const { data, error } = await supabase
       .from("pickup_requests")
       .update({ status: "accepted", accepted_by: userId })
       .eq("id", req.id)
-      .eq("status", "pending") // ✅ only update if still pending
+      .eq("status", "pending")
       .select();
 
     if (error) {
@@ -638,8 +690,62 @@ export default function MapScreen() {
     };
 
     setPickupRequests((p) => p.map((r) => (r.id === req.id ? u : r)));
-    Alert.alert("Accepted", `You'll pick up ${req.requesterName}.`);
+
+    // Calculate route to pickup location
+    if (location) {
+      try {
+        const routeToPickup = await accurateRoute(
+          location,
+          req.requesterLocation
+        );
+        const routeKey = `pickup-${req.id}`;
+
+        setPickupRoutes((prev) => ({
+          ...prev,
+          [routeKey]: routeToPickup.coordinates,
+        }));
+        setPickupRouteData((prev) => ({
+          ...prev,
+          [routeKey]: routeToPickup,
+        }));
+
+        // Animate map to show the route
+        if (mapRef.current) {
+          const bounds = [location, req.requesterLocation];
+          const minLat = Math.min(...bounds.map((p) => p.latitude));
+          const maxLat = Math.max(...bounds.map((p) => p.latitude));
+          const minLng = Math.min(...bounds.map((p) => p.longitude));
+          const maxLng = Math.max(...bounds.map((p) => p.longitude));
+
+          const centerLat = (minLat + maxLat) / 2;
+          const centerLng = (minLng + maxLng) / 2;
+          const deltaLat = (maxLat - minLat) * 1.5;
+          const deltaLng = (maxLng - minLng) * 1.5;
+
+          mapRef.current.animateToRegion(
+            {
+              latitude: centerLat,
+              longitude: centerLng,
+              latitudeDelta: Math.max(deltaLat, 0.01),
+              longitudeDelta: Math.max(deltaLng, 0.01),
+            },
+            1000
+          );
+        }
+
+        Alert.alert(
+          "Accepted",
+          `You'll pick up ${req.requesterName}. Route shown on map.`
+        );
+      } catch (error) {
+        console.error("Error calculating pickup route:", error);
+        Alert.alert("Accepted", `You'll pick up ${req.requesterName}.`);
+      }
+    } else {
+      Alert.alert("Accepted", `You'll pick up ${req.requesterName}.`);
+    }
   };
+
   const cancelPickup = async () => {
     if (!myPickupRequest) return;
     const { error } = await supabase
@@ -651,13 +757,13 @@ export default function MapScreen() {
     setMyPickupRequest(null);
     Alert.alert("Cancelled", "Pickup request cancelled.");
   };
-  // driver cancels after accepting
+
   const cancelAcceptedPickup = async (req: PickupRequest) => {
     const { data, error } = await supabase
       .from("pickup_requests")
-      .update({ status: "pending", accepted_by: null }) // reset it
+      .update({ status: "pending", accepted_by: null })
       .eq("id", req.id)
-      .eq("accepted_by", userId) // only the driver can cancel
+      .eq("accepted_by", userId)
       .select();
 
     if (error) {
@@ -667,10 +773,20 @@ export default function MapScreen() {
     }
 
     if (data && data.length > 0) {
-      const updated = data[0];
-      setPickupRequests(
-        (p) => p.filter((r) => r.id !== req.id) // 🔑 remove it locally
-      );
+      setPickupRequests((p) => p.filter((r) => r.id !== req.id));
+
+      // Remove pickup route
+      const routeKey = `pickup-${req.id}`;
+      setPickupRoutes((prev) => {
+        const newRoutes = { ...prev };
+        delete newRoutes[routeKey];
+        return newRoutes;
+      });
+      setPickupRouteData((prev) => {
+        const newData = { ...prev };
+        delete newData[routeKey];
+        return newData;
+      });
 
       Alert.alert(
         "Cancelled",
@@ -683,12 +799,34 @@ export default function MapScreen() {
     await loadFriendsAndLocations();
     Alert.alert("Refreshed", "Friend locations updated");
   };
+
   const centerOnUser = () => {
     if (location && mapRef.current)
       mapRef.current.animateToRegion(
         { ...location, latitudeDelta: 0.01, longitudeDelta: 0.01 },
         800
       );
+  };
+
+  // Navigate to pickup with event as final destination
+  const navigateToPickupWithEvent = (req: PickupRequest) => {
+    const event = events.find((e) => e.id === req.eventId);
+    if (event) {
+      startNavigationWithPickup(
+        req.requesterLocation.latitude,
+        req.requesterLocation.longitude,
+        event.location_lat,
+        event.location_lng,
+        `Pick up ${req.requesterName}`,
+        event.name
+      );
+    } else {
+      startNavigation(
+        req.requesterLocation.latitude,
+        req.requesterLocation.longitude,
+        `Pick up ${req.requesterName}`
+      );
+    }
   };
 
   // ---------- Effects ----------
@@ -729,10 +867,12 @@ export default function MapScreen() {
     if (!userId) return;
     loadUserParties();
   }, [userId]);
+
   useEffect(() => {
     if (!userId) return;
     loadPartyEvents();
   }, [userId, userParties]);
+
   useEffect(() => {
     if (!userId || !location) return;
     loadFriendsAndLocations();
@@ -748,40 +888,7 @@ export default function MapScreen() {
       ch.unsubscribe();
     };
   }, [userId, location]);
-  useEffect(() => {
-    if (!userId) return;
 
-    const ch = supabase
-      .channel("events_updates")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "events" },
-        () => loadPartyEvents()
-      )
-      .subscribe();
-
-    return () => {
-      // synchronous cleanup
-      ch.unsubscribe();
-    };
-  }, [userId, userParties]);
-
-  useEffect(() => {
-    if (!userId || !location) return;
-
-    const ch = supabase
-      .channel("friend_locations")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "user_locations" },
-        () => loadFriendsAndLocations()
-      )
-      .subscribe();
-
-    return () => {
-      ch.unsubscribe(); // no await
-    };
-  }, [userId, location]);
   useEffect(() => {
     if (!userId || !location) return;
     const id = setInterval(async () => {
@@ -813,7 +920,7 @@ export default function MapScreen() {
     pickupRequests
       .filter((r) => r.status === "pending" && r.requesterId !== userId)
       .reduce((acc, cur) => {
-        acc[cur.requesterId] = cur; // keep latest request per requester
+        acc[cur.requesterId] = cur;
         return acc;
       }, {} as Record<string, PickupRequest>)
   );
@@ -864,6 +971,7 @@ export default function MapScreen() {
             }
           />
         </Marker>
+
         {joinedEvents.map((e) => (
           <Marker
             key={`event-${e.id}`}
@@ -874,6 +982,7 @@ export default function MapScreen() {
             <EventMarker isJoined />
           </Marker>
         ))}
+
         {friends.map((f) => {
           const offering = pickupRequests.some(
             (r) => r.acceptedBy === f.id && r.status === "accepted"
@@ -889,12 +998,38 @@ export default function MapScreen() {
             </Marker>
           );
         })}
+
+        {/* Pickup location markers for accepted pickups */}
+        {myAcceptedPickups.map((req) => (
+          <Marker
+            key={`pickup-marker-${req.id}`}
+            coordinate={req.requesterLocation}
+            title={`Pick up ${req.requesterName}`}
+            description={`Going to ${req.eventName}`}
+          >
+            <PickupMarker />
+          </Marker>
+        ))}
+
+        {/* Event routes */}
         {Object.entries(routes).map(([key, coords], i) => (
           <Polyline
             key={`route-${key}`}
             coordinates={coords}
             strokeColor={colorAt(key, i)}
             strokeWidth={key === "user" ? 5 : 4}
+            lineJoin="round"
+            lineCap="round"
+          />
+        ))}
+
+        {/* Pickup routes */}
+        {Object.entries(pickupRoutes).map(([key, coords], i) => (
+          <Polyline
+            key={`pickup-route-${key}`}
+            coordinates={coords}
+            strokeColor={colorAt(key, i)}
+            strokeWidth={5}
             lineJoin="round"
             lineCap="round"
           />
@@ -926,7 +1061,6 @@ export default function MapScreen() {
 
       {/* Status */}
       <View style={styles.statusLeft}>
-        {/* Status (only show if pickup exists) */}
         {myPickupRequest && (
           <View style={styles.statusLeft}>
             <View
@@ -965,6 +1099,7 @@ export default function MapScreen() {
           </View>
         )}
       </View>
+
       {/* Event cards */}
       {events.length > 0 && (
         <View style={styles.cardsWrap}>
@@ -1001,29 +1136,42 @@ export default function MapScreen() {
                   )}
 
                   <View style={styles.cardActions}>
-                    {/* Location icon */}
                     <TouchableOpacity
                       style={styles.iconBtn}
                       onPress={() => showEventRoutes(e)}
                     >
                       <Ionicons
                         name="location-outline"
-                        size={22}
+                        size={20}
                         color="#444"
                       />
+                      <Text style={styles.iconLabel}>Route</Text>
                     </TouchableOpacity>
 
-                    {/* Pickup icon */}
+                    <TouchableOpacity
+                      style={styles.iconBtn}
+                      onPress={() =>
+                        startNavigation(e.location_lat, e.location_lng, e.name)
+                      }
+                    >
+                      <Ionicons
+                        name="navigate-outline"
+                        size={20}
+                        color="#444"
+                      />
+                      <Text style={styles.iconLabel}>Maps</Text>
+                    </TouchableOpacity>
+
                     {joined && !wantPickup && (
                       <TouchableOpacity
                         style={styles.iconBtn}
                         onPress={() => requestPickup(e)}
                       >
-                        <Ionicons name="car-outline" size={22} color="#444" />
+                        <Ionicons name="car-outline" size={20} color="#444" />
+                        <Text style={styles.iconLabel}>Pickup</Text>
                       </TouchableOpacity>
                     )}
 
-                    {/* Join button */}
                     <TouchableOpacity
                       style={[styles.btnJoin, joined && styles.btnJoined]}
                       onPress={() => toggleEventJoin(e)}
@@ -1067,7 +1215,24 @@ export default function MapScreen() {
             {routeData.user && (
               <View style={styles.routeSection}>
                 <Text style={styles.sectionTitle}>Your Route</Text>
-                {/* ... your route row ... */}
+                <View style={styles.routeRow}>
+                  <View style={styles.routeWho}>
+                    <View
+                      style={[styles.colorDot, { backgroundColor: "#007AFF" }]}
+                    />
+                    <Text style={styles.routeName}>
+                      You → {selectedEvent?.name}
+                    </Text>
+                  </View>
+                  <View style={styles.routeStats}>
+                    <Text style={styles.routeTime}>
+                      {fmtDuration(routeData.user.duration)}
+                    </Text>
+                    <Text style={styles.routeDist}>
+                      {routeData.user.distance}km
+                    </Text>
+                  </View>
+                </View>
               </View>
             )}
 
@@ -1075,7 +1240,82 @@ export default function MapScreen() {
             {Object.keys(routeData).filter((k) => k !== "user").length > 0 && (
               <View style={styles.routeSection}>
                 <Text style={styles.sectionTitle}>Friends' Routes</Text>
-                {/* ... map over friends ... */}
+                {Object.entries(routeData)
+                  .filter(([key]) => key !== "user")
+                  .map(([friendId, data], i) => {
+                    const friend = friends.find((f) => f.id === friendId);
+                    return (
+                      <View key={friendId} style={styles.routeRow}>
+                        <View style={styles.routeWho}>
+                          <View
+                            style={[
+                              styles.colorDot,
+                              { backgroundColor: colorAt(friendId, i) },
+                            ]}
+                          />
+                          <View style={styles.routeAvatarBox}>
+                            {friend?.avatar?.startsWith("http") ? (
+                              <Image
+                                source={{ uri: friend.avatar }}
+                                style={styles.routeAvatarImg}
+                              />
+                            ) : (
+                              <Text style={styles.routeAvatarInitial}>
+                                {friend?.name?.charAt(0)?.toUpperCase() || "?"}
+                              </Text>
+                            )}
+                          </View>
+                          <Text style={styles.routeName}>
+                            {friend?.name || "Friend"}
+                          </Text>
+                        </View>
+                        <View style={styles.routeStats}>
+                          <Text style={styles.routeTime}>
+                            {fmtDuration(data.duration)}
+                          </Text>
+                          <Text style={styles.routeDist}>
+                            {data.distance}km
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+              </View>
+            )}
+
+            {/* Pickup Routes */}
+            {Object.keys(pickupRouteData).length > 0 && (
+              <View style={styles.routeSection}>
+                <Text style={styles.sectionTitle}>🚗 Pickup Routes</Text>
+                {Object.entries(pickupRouteData).map(([routeKey, data]) => {
+                  const pickupId = routeKey.replace("pickup-", "");
+                  const pickup = myAcceptedPickups.find(
+                    (p) => p.id === pickupId
+                  );
+                  if (!pickup) return null;
+
+                  return (
+                    <View key={routeKey} style={styles.routeRow}>
+                      <View style={styles.routeWho}>
+                        <View
+                          style={[
+                            styles.colorDot,
+                            { backgroundColor: "#EF4444" },
+                          ]}
+                        />
+                        <Text style={styles.routeName}>
+                          You → {pickup.requesterName}
+                        </Text>
+                      </View>
+                      <View style={styles.routeStats}>
+                        <Text style={styles.routeTime}>
+                          {fmtDuration(data.duration)}
+                        </Text>
+                        <Text style={styles.routeDist}>{data.distance}km</Text>
+                      </View>
+                    </View>
+                  );
+                })}
               </View>
             )}
 
@@ -1106,8 +1346,19 @@ export default function MapScreen() {
                       </Text>
                       <View style={styles.reqActions}>
                         <TouchableOpacity
+                          style={styles.btnNavigate}
+                          onPress={() => {
+                            navigateToPickupWithEvent(r);
+                            setShowPickupModal(false);
+                          }}
+                        >
+                          <Text style={styles.btnNavigateText}>
+                            🧭 Navigate
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
                           style={styles.btnGhost}
-                          onPress={() => cancelAcceptedPickup(r)} // 🔑 new cancel function
+                          onPress={() => cancelAcceptedPickup(r)}
                         >
                           <Text style={styles.btnGhostText}>✕ Cancel Ride</Text>
                         </TouchableOpacity>
@@ -1118,65 +1369,182 @@ export default function MapScreen() {
               </>
             )}
 
-            {pickupRequests
-              .filter((r) => r.status === "pending" && r.requesterId !== userId) // 🚫 don’t show your own
-              .map((r) => {
-                const e = events.find((x) => x.id === r.eventId);
-                if (!e) return null;
-                return (
-                  <View key={r.id} style={styles.reqCard}>
-                    <View style={styles.reqHead}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.reqName}>{r.requesterName}</Text>
-                        <Text style={styles.reqEvent}>
-                          {r.eventName || e.name}
+            {/* Pending pickup requests */}
+            {uniqueRequests.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>🤚 Pending Requests</Text>
+                {uniqueRequests.map((r) => {
+                  const e = events.find((x) => x.id === r.eventId);
+                  if (!e) return null;
+                  return (
+                    <View key={r.id} style={styles.reqCard}>
+                      <View style={styles.reqHead}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.reqName}>{r.requesterName}</Text>
+                          <Text style={styles.reqEvent}>
+                            {r.eventName || e.name}
+                          </Text>
+                        </View>
+                        <Text style={styles.reqTime}>
+                          {new Date(r.timestamp).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </Text>
                       </View>
-                      <Text style={styles.reqTime}>
-                        {new Date(r.timestamp).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                      <Text style={styles.reqDesc}>
+                        Needs a ride to {e.location_name || "the event"}
                       </Text>
-                    </View>
-                    <Text style={styles.reqDesc}>
-                      Needs a ride to {e.location_name || "the event"}
-                    </Text>
-                    <View style={styles.reqActions}>
-                      <TouchableOpacity
-                        style={styles.btnAccept}
-                        onPress={() => {
-                          acceptPickup(r);
-                          setShowPickupModal(false);
-                        }}
-                      >
-                        <Text style={styles.btnAcceptText}>✓ Offer Ride</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.btnGhost}
-                        onPress={() =>
-                          setPickupRequests((p) =>
-                            p.map((x) =>
-                              x.id === r.id ? { ...x, status: "declined" } : x
+                      <View style={styles.reqActions}>
+                        <TouchableOpacity
+                          style={styles.btnAccept}
+                          onPress={() => {
+                            acceptPickup(r);
+                            setShowPickupModal(false);
+                          }}
+                        >
+                          <Text style={styles.btnAcceptText}>✓ Offer Ride</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.btnGhost}
+                          onPress={() =>
+                            setPickupRequests((p) =>
+                              p.map((x) =>
+                                x.id === r.id ? { ...x, status: "declined" } : x
+                              )
                             )
-                          )
-                        }
-                      >
-                        <Text style={styles.btnGhostText}>✕ Decline</Text>
-                      </TouchableOpacity>
+                          }
+                        >
+                          <Text style={styles.btnGhostText}>✕ Decline</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                );
-              })}
+                  );
+                })}
+              </>
+            )}
 
             {pendingPickupCount === 0 && myAcceptedPickups.length === 0 && (
               <View style={styles.emptyBox}>
                 <Text style={styles.emptyTitle}>🚗 No pickups</Text>
                 <Text style={styles.muted}>
-                  When friends need rides or you accept pickups, they’ll appear
+                  When friends need rides or you accept pickups, they'll appear
                   here.
                 </Text>
               </View>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Routes Modal */}
+      <Modal
+        visible={showRoutesModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowRoutesModal(false)}
+      >
+        <View style={styles.modal}>
+          <View style={styles.modalHead}>
+            <View>
+              <Text style={styles.modalTitle}>
+                {selectedEvent
+                  ? `Routes to ${selectedEvent.name}`
+                  : "Event Routes"}
+              </Text>
+              <Text style={styles.modalSub}>
+                {selectedEvent?.location_name || "Event location"}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.modalClose}
+              onPress={() => setShowRoutesModal(false)}
+            >
+              <Text style={styles.modalCloseText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalBody}>
+            {isCalculating ? (
+              <View style={styles.center}>
+                <ActivityIndicator size="large" color="#007AFF" />
+                <Text style={styles.muted}>Calculating routes...</Text>
+              </View>
+            ) : (
+              <>
+                {routeData.user && (
+                  <View style={styles.routeSection}>
+                    <Text style={styles.sectionTitle}>Your Route</Text>
+                    <View style={styles.routeRow}>
+                      <View style={styles.routeWho}>
+                        <View
+                          style={[
+                            styles.colorDot,
+                            { backgroundColor: "#007AFF" },
+                          ]}
+                        />
+                        <Text style={styles.routeName}>You</Text>
+                      </View>
+                      <View style={styles.routeStats}>
+                        <Text style={styles.routeTime}>
+                          {fmtDuration(routeData.user.duration)}
+                        </Text>
+                        <Text style={styles.routeDist}>
+                          {routeData.user.distance}km
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {Object.keys(routeData).filter((k) => k !== "user").length >
+                  0 && (
+                  <View style={styles.routeSection}>
+                    <Text style={styles.sectionTitle}>Friends' Routes</Text>
+                    {Object.entries(routeData)
+                      .filter(([key]) => key !== "user")
+                      .map(([friendId, data], i) => {
+                        const friend = friends.find((f) => f.id === friendId);
+                        return (
+                          <View key={friendId} style={styles.routeRow}>
+                            <View style={styles.routeWho}>
+                              <View
+                                style={[
+                                  styles.colorDot,
+                                  { backgroundColor: colorAt(friendId, i) },
+                                ]}
+                              />
+                              <View style={styles.routeAvatarBox}>
+                                {friend?.avatar?.startsWith("http") ? (
+                                  <Image
+                                    source={{ uri: friend.avatar }}
+                                    style={styles.routeAvatarImg}
+                                  />
+                                ) : (
+                                  <Text style={styles.routeAvatarInitial}>
+                                    {friend?.name?.charAt(0)?.toUpperCase() ||
+                                      "?"}
+                                  </Text>
+                                )}
+                              </View>
+                              <Text style={styles.routeName}>
+                                {friend?.name || "Friend"}
+                              </Text>
+                            </View>
+                            <View style={styles.routeStats}>
+                              <Text style={styles.routeTime}>
+                                {fmtDuration(data.duration)}
+                              </Text>
+                              <Text style={styles.routeDist}>
+                                {data.distance}km
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                  </View>
+                )}
+              </>
             )}
           </ScrollView>
         </View>
@@ -1341,6 +1709,12 @@ const styles = StyleSheet.create({
   },
   cardDesc: { fontSize: 13, color: "#6B7280", marginBottom: 10 },
 
+  iconLabel: {
+    fontSize: 10,
+    color: "#444",
+    marginTop: 2,
+  },
+
   cardActions: {
     flexDirection: "row",
     alignItems: "center",
@@ -1350,11 +1724,13 @@ const styles = StyleSheet.create({
   iconBtn: {
     backgroundColor: "#cb6de6",
     borderRadius: 6,
-    width: 36,
-    height: 36,
+    width: 50, // give a bit more width
+    height: 50,
     alignItems: "center",
     justifyContent: "center",
+    padding: 4, // breathing room
   },
+
   iconText: { fontSize: 15 },
 
   btnJoin: {
@@ -1388,6 +1764,7 @@ const styles = StyleSheet.create({
   pinEvent: { backgroundColor: "#3B82F6" },
   pinJoined: { backgroundColor: "#10B981" },
   pinNeeds: { backgroundColor: "#EF4444" },
+  pinPickup: { backgroundColor: "#F59E0B" }, // Added style for pickup pin
   friendPin: {
     width: 48,
     height: 48,
@@ -1551,4 +1928,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnGhostText: { color: "#6B7280", fontSize: 14, fontWeight: "700" },
+  btnNavigate: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flex: 1,
+    alignItems: "center",
+  },
+  btnNavigateText: { color: "#007AFF", fontSize: 14, fontWeight: "700" },
 });
