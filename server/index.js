@@ -66,7 +66,7 @@ if (!FOURSQUARE_API_KEY) {
 
 const FOURSQUARE = axios.create({
   baseURL: "https://api.foursquare.com/v3/places",
-  headers: { Authorization: FOURSQUARE_API_KEY },
+  headers: { Authorization: `Bearer ${FOURSQUARE_API_KEY}` },
 });
 
 // ---------- helpers ----------
