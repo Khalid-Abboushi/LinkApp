@@ -14,10 +14,21 @@ if (!FOURSQUARE_API_KEY) {
 }
 
 const FOURSQUARE = axios.create({
-  baseURL: "https://api.foursquare.com/v3/places",
+  baseURL: "https://api.foursquare.com/v3/places/search",
   headers: { Authorization: `Bearer ${FOURSQUARE_API_KEY}` }, // ✅ Bearer added
   timeout: 8000, // 8 sec timeout
 });
+const fetchFoursquarePlaces = async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/foursquare-search?query=pizza&near=Toronto`);
+    const data = await res.json();
+    console.log("📍 Foursquare results:", data);
+    return data;
+  } catch (err) {
+    console.error("❌ Error fetching Foursquare:", err);
+  }
+};
+
 
 // --- Helpers ---
 function haversineMeters(lat1, lon1, lat2, lon2) {
@@ -81,7 +92,29 @@ function toCard(biz, minutes, dMeters, photoUrl) {
 }
 
 // --- Routes ---
-app.get("/", (_req, res) => res.send("OK"));
+app.get("/api/foursquare-search", async (req, res) => {
+  try {
+    const { query, near } = req.query;
+
+    const response = await axios.get("https://api.foursquare.com/v3/places/search", {
+      headers: {
+        Authorization: process.env.FOURSQUARE_API_KEY, // 🔑 Must be "Bearer KEY"
+      },
+      params: {
+        query: query || "coffee",
+        near: near || "Toronto",
+        limit: 10,
+      },
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("❌ Foursquare API error:", error.response?.data || error.message);
+    res
+      .status(500)
+      .json({ error: "server_error", detail: error.response?.data || error.message });
+  }
+});
 
 app.post("/generate-trips", async (req, res) => {
   try {
@@ -145,4 +178,6 @@ app.post("/generate-trips", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server listening on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
