@@ -130,7 +130,7 @@ app.post("/generate-trips", async (req, res) => {
       limit: String(limit * 2),
     });
 
-    const { data } = await FOURSQUARE.get(`/search?${params.toString()}`);
+    const { data } = await FOURSQUARE.get(`/places/search?${params.toString()}`);
     let businesses = data.results || [];
 
     // --- Fetch photos sequentially to avoid aborts ---
