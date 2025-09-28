@@ -3,7 +3,6 @@ import React, { useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
-  ImageBackground,
   ScrollView,
   TouchableOpacity,
   Pressable,
@@ -14,10 +13,16 @@ import {
   Platform,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { Image as ExpoImage } from "expo-image";
+import { normalizeImage, FALLBACK_IMG } from "@/utils/safeImage";
 import { Ionicons } from "@expo/vector-icons";
 import AddToPartyDialog from "@/components/ui/AddToPartyDialog";
 
-/* =============== Local types (structural; no imports needed) =============== */
+
+import { supabase } from "@/lib/supabase"; // to get current user if you need party context
+
+
+/* =============== Local types =============== */
 type Palette = {
   name: string;
   bg: string;
@@ -38,6 +43,11 @@ type Suggestion = {
   location: string;
   tags: string[];
   hero: string;
+
+  rating?: number;
+  reviewCount?: number;
+  distanceText?: string;
+  priceLabel?: string;
 };
 
 /* ===== Helpers ===== */
@@ -52,7 +62,7 @@ const haptic = (style: "light"|"medium"|"heavy" = "light")=>{
 const hashStr = (s:string)=>{ let h=0; for(let i=0;i<s.length;i++){ h=(h*31 + s.charCodeAt(i))|0; } return Math.abs(h); };
 const pickAccent = (hero:string, P:Palette)=> [P.p1, P.p2, P.p3, P.p4][hashStr(hero)%4];
 
-/* ===== Local (no-deps) confetti ===== */
+/* ===== Local confetti ===== */
 type Particle = { dx:number; dy:number; r:number; rot:number; delay:number; life:number; color:string };
 const makeParticles = (colors:string[], n=26): Particle[] => Array.from({length:n}).map((_,i)=>{
   const angle = Math.random()*Math.PI - Math.PI/2;
@@ -211,7 +221,7 @@ export default function InteractiveCard({
               backgroundColor:P.bg2,
               borderWidth:1,
               borderColor:P.glassBorder,
-              ...(NO_SELECT || {}),         // ⬅️ prevent selection/drag on web
+              ...(NO_SELECT || {}),
               transform:[
                 { perspective: 800 },
                 { rotateX: rotX.interpolate({inputRange:[-15,15],outputRange:["-15deg","15deg"]}) as any },
@@ -222,7 +232,17 @@ export default function InteractiveCard({
           >
             {/* hero (long press to preview) */}
             <Pressable onLongPress={()=>{ haptic("medium"); onPreview(s); }}>
-              <ImageBackground source={{ uri: s.hero }} style={{ height:220 }}>
+              <View style={{ height: 220, backgroundColor: "rgba(255,255,255,0.04)" }}>
+                <ExpoImage
+                  recyclingKey={s.hero}
+                  source={{ uri: normalizeImage(s.hero) }}
+                  // Generic nice blur placeholder (works everywhere)
+                  placeholder={{ blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj" }}
+                  cachePolicy="disk"
+                  contentFit="cover"
+                  transition={250}
+                  style={{ position:"absolute", inset:0, width:"100%", height:"100%" }}
+                />
                 <View style={{ position:"absolute", top:14, left:-60, transform:[{ rotate:"-18deg" }] }}>
                   <LinearGradient colors={[accent, `${accent}66`]} start={{x:0,y:0}} end={{x:1,y:0}}
                     style={{ width:180, height:10, borderRadius:999 }} />
@@ -232,7 +252,7 @@ export default function InteractiveCard({
                 <LinearGradient colors={["rgba(0,0,0,0)","rgba(0,0,0,0.45)","rgba(0,0,0,0.86)"]}
                   start={{x:0.5,y:0}} end={{x:0.5,y:1}}
                   style={{ position:"absolute", bottom:0, left:0, right:0, height:140 }} />
-              </ImageBackground>
+              </View>
             </Pressable>
 
             {/* moving light hotspot */}
@@ -245,10 +265,34 @@ export default function InteractiveCard({
             {/* body */}
             <View style={{ padding:16 }}>
               <Text selectable={false} style={{ color:P.text, fontSize:18, fontFamily:"Avenir-Heavy", letterSpacing:0.3 }}>{s.title}</Text>
+
+              {/* rating + reviews + distance + price range */}
+              {(typeof s.rating === "number" || s.distanceText || s.priceLabel) && (
+                <View style={{ flexDirection:"row", flexWrap:"wrap", gap:12, marginTop:6 }}>
+                  {typeof s.rating === "number" && (
+                    <View style={{ flexDirection:"row", alignItems:"center", gap:4 }}>
+                      <Ionicons name="star" size={14} color="#FFD166" />
+                      <Text selectable={false} style={{ color:"rgba(255,255,255,0.9)", fontSize:12 }}>
+                        {s.rating.toFixed(1)}
+                        {typeof s.reviewCount === "number" ? ` (${s.reviewCount})` : ""}
+                      </Text>
+                    </View>
+                  )}
+                  {s.distanceText && (
+                    <Text selectable={false} style={{ color:"rgba(255,255,255,0.8)", fontSize:12 }}>{s.distanceText}</Text>
+                  )}
+                  {s.priceLabel && (
+                    <Text selectable={false} style={{ color:"rgba(255,255,255,0.8)", fontSize:12 }}>{s.priceLabel}</Text>
+                  )}
+                </View>
+              )}
+
               <Text selectable={false} style={{ color:P.textMuted, fontSize:13, lineHeight:19, marginTop:6, fontFamily:"Avenir-Book" }}>{s.desc}</Text>
 
               <View style={{ flexDirection:"row", gap:14, marginTop:8 }}>
-                <Text selectable={false} style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>⏱ {s.minutes}m</Text>
+                <Text selectable={false} style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>
+  ⏱ {s.minutes} min away
+</Text>
                 <Text selectable={false} style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>👥 {s.group}</Text>
                 <Text selectable={false} style={{ color:P.textMuted, fontSize:12, fontFamily:"Avenir-Book" }}>📍 {s.location}</Text>
               </View>
@@ -257,7 +301,7 @@ export default function InteractiveCard({
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop:10 }}>
                 {s.tags.map((t,i)=>(
                   <View
-                    key={t}
+                    key={`${t}-${i}`}
                     style={{
                       marginRight: i===s.tags.length-1?0:8,
                       paddingHorizontal:14, paddingVertical:8, borderRadius:999,

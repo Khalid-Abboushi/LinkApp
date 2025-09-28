@@ -1,16 +1,16 @@
 // components/CreatePartyModal.tsx
+import * as ImagePicker from "expo-image-picker";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
+  Image,
   Modal,
-  View,
+  Platform,
   Text,
   TextInput,
   TouchableOpacity,
-  Image,
-  ActivityIndicator,
-  Platform,
+  View,
 } from "react-native";
-import * as ImagePicker from "expo-image-picker";
 
 /** Image object compatible with our upload code */
 export type PickedImage = {
@@ -42,7 +42,7 @@ export default function CreatePartyModal({
 
   const canSubmit = useMemo(() => {
     const trimmed = name.trim();
-    return !busy && trimmed.length > 0 && trimmed.length <= 15;
+    return !busy && trimmed.length > 0 && trimmed.length <= 30;
   }, [busy, name]);
 
   const reset = () => {
@@ -130,7 +130,7 @@ export default function CreatePartyModal({
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) return setError("Please enter a name.");
-    if (trimmed.length > 15) return setError("Name must be 15 characters or less.");
+    if (trimmed.length > 30) return setError("Name must be 30 characters or less.");
 
     try {
       setBusy(true);
@@ -171,11 +171,11 @@ export default function CreatePartyModal({
             Create party
           </Text>
 
-          <Text style={{ color: "#D0D4E0", marginBottom: 6 }}>Party name (max 15)</Text>
+          <Text style={{ color: "#D0D4E0", marginBottom: 6 }}>Party name (max 30 characters)</Text>
           <TextInput
             value={name}
             onChangeText={(t) => {
-              setName(t.slice(0, 15));
+              setName(t.slice(0, 30));
               if (error) setError(null);
             }}
             placeholder="e.g. Friday Crew"
@@ -191,7 +191,7 @@ export default function CreatePartyModal({
               paddingVertical: 10,
               marginBottom: 14,
             }}
-            maxLength={15}
+            maxLength={30}
             editable={!busy}
           />
 

@@ -15,7 +15,7 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
-  Linking, // ✅ for openSettings on native
+  Linking, 
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
@@ -94,10 +94,34 @@ type FriendTile = {
    ========================= */
 
 // Get coords with a permission prompt (native+web). Returns null if denied/fails.
+// Get coords with a permission prompt (native+web). Returns null if denied/fails.
 async function getCoordsWithPrompt(): Promise<{ latitude:number; longitude:number; accuracy:number } | null> {
   try {
     if (Platform.OS === "web") {
       if (!("geolocation" in navigator)) return null;
+
+      // --- Check current permission state using Permissions API ---
+      let state: PermissionState | null = null;
+      try {
+        const anyNav: any = navigator as any;
+        if (anyNav?.permissions?.query) {
+          const perm = await anyNav.permissions.query({ name: "geolocation" as PermissionName });
+          state = perm.state; // "granted" | "prompt" | "denied"
+        }
+      } catch {
+        // ignore if API not available
+      }
+
+      // If user already BLOCKED it → show instructions
+      if (state === "denied") {
+        Alert.alert(
+          "Location blocked",
+          "Click the lock icon in the address bar → Site settings → Location → set to Allow (or click Reset permission). Then try again."
+        );
+        return null;
+      }
+
+      // If "prompt" or "granted", this will trigger the browser’s native prompt or return coords
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000 })
       );
@@ -108,6 +132,7 @@ async function getCoordsWithPrompt(): Promise<{ latitude:number; longitude:numbe
       };
     }
 
+    // Native (iOS/Android via expo-location) 
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") return null;
 
@@ -121,6 +146,7 @@ async function getCoordsWithPrompt(): Promise<{ latitude:number; longitude:numbe
     return null;
   }
 }
+
 
 // Upsert latest coords
 async function upsertUserLocation(userId: string, coords: { latitude:number; longitude:number; accuracy:number }) {
