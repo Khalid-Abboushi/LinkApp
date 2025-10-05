@@ -18,10 +18,6 @@ import { normalizeImage, FALLBACK_IMG } from "@/utils/safeImage";
 import { Ionicons } from "@expo/vector-icons";
 import AddToPartyDialog from "@/components/ui/AddToPartyDialog";
 
-
-import { supabase } from "@/lib/supabase"; // to get current user if you need party context
-
-
 /* =============== Local types =============== */
 type Palette = {
   name: string;
