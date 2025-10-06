@@ -20,7 +20,9 @@ export type AICard = {
   bookingUrl?: string;
   distanceMeters?: number;
   
-
+  priceTier?: '$' | '$$' | '$$$' | '$$$$';
+  priceLevel?: number; // 1..4
+ 
   // NEW: Location coordinates
   lat?: number;
   lng?: number;
@@ -40,6 +42,9 @@ export interface GenerateParams {
   maxMinutes?: number;  // cutoff for ETA filtering
   mode?: "auto" | "drive" | "walk" | "bike"; // travel mode
   // NEW: Option to include location extraction from prompt
+  priceTiers?: ('$' | '$$' | '$$$' | '$$$$')[];  // NEW
+  minPriceLevel?: number;                         // NEW (1..4)
+  maxPriceLevel?: number;  
   extractLocations?: boolean;
 }
 
