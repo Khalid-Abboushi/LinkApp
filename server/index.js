@@ -3,6 +3,11 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
+import axios from "axios";
+
+const AI = axios.create({
+  baseURL: `${process.env.EXPO_PUBLIC_API_URL}/generate-trips`,
+});
 
 // --- Distance / ETA helpers ---
 function haversineMeters(lat1, lon1, lat2, lon2) {
