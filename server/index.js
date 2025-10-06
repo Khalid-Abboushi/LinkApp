@@ -178,25 +178,24 @@ app.post("/generate-trips", async (req, res) => {
     }
 
     // 1) Try AI Chat
-    try {
-  const params = new URLSearchParams({
-    term: prompt || "things to do",
-    latitude: String(lat),
-    longitude: String(lng),
-    radius: String(radius),
-    limit: String(Math.max(limit, 12)),
-    sort_by: "best_match",
-    open_now: "false",
-  });
-
-  // Pass Yelp price filter if present
-  if (yelpPrice) params.set("price", yelpPrice);
-
-  const { data } = await FUSION.get(`/businesses/search?${params.toString()}`);
-  businesses = data?.businesses || [];
-} catch (e) {
-  console.error("Fusion API error:", e?.response?.data || e.message);
-}
+    if (String(process.env.YELP_USE_AI || "true").toLowerCase() === "true") {
+      try {
+        const { data } = await AI.post("", {
+          query: prompt,
+          user_context: { locale, latitude: lat, longitude: lng },
+        });
+        businesses =
+          data?.entities?.[0]?.businesses ||
+          data?.businesses ||
+          data?.results ||
+          [];
+      } catch (e) {
+        console.warn(
+          "[AI Chat] falling back to Fusion:",
+          e?.response?.status || e?.message
+        );
+      }
+    }
 
     // 2) If AI empty, Fusion search
     if (!businesses?.length) {
