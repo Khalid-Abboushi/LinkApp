@@ -24,6 +24,8 @@ import InteractiveCard from "@/components/ui/interactiveCard";
 import { generateAICards, type AICard } from "../../lib/ai";
 // Location
 const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+const [priceTiers, setPriceTiers] = useState<Array<'$'|'$$'|'$$$'|'$$$$'>>([]);
+
 /* =========================
    UTIL — image normalization + prefetch
    ========================= */
@@ -735,6 +737,8 @@ export default function Discover() {
                     : "",
                   item.distanceText || "",
                 ].filter(Boolean),
+                lat: (item as any).lat ?? null,
+                lng: (item as any).lng ?? null,
                 hero: item.imageUrl,
                 rating: item.rating,
                 reviewCount: item.reviewCount,
