@@ -8,6 +8,6 @@ NODE_ENV = "production"
 name = "yelp-ai"
 root = "server"           # <— important
 start = "npm start"       # uses server/package.json scripts.start
-YELP_API_KEY= "ripc0bHRllBNdQeejgeyCxlGIjgwCQ6zmghfEbsIwHdRME1aBqOEMPpBEt0Lq0phlu05o6E2YRrmADfoW18iPb5LThHLUbP0XIgXoMKoGRM8EbJi7ncogkt2ufqgaHYx"
+YELP_API_KEY= "Bq-8T-9KGXkpy6aLsj4oURPwvJCyZiYZBOttHhQ5CfT0GYRtestCqFAxm_sGAXQAwEDZka32Ey6_-Hnm3S9ou1SymQPcyI0WjQqxTrmklX28ZUf67M2SUheMDYzZaHYx"
 YELP_USE_AI="true"
 DEFAULT_CURRENCY="CAD"
