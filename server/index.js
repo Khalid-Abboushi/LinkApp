@@ -4,9 +4,6 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 
-
-const AI = axios.create();
-
 // --- Distance / ETA helpers ---
 function haversineMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000; // meters
@@ -147,9 +144,6 @@ app.post("/generate-trips", async (req, res) => {
       lat,
       lng,
       maxCards = 6,
-      priceTiers,               // ["$", "$$"] optional
-      minPriceLevel,            // 1..4 optional
-      maxPriceLevel,            // 1..4 optional
       locale = "en_US",
       radiusMeters,
       maxMinutes = 20, // NEW: only return places <= this ETA
@@ -162,26 +156,13 @@ app.post("/generate-trips", async (req, res) => {
         .json({ error: "lat and lng are required numbers" });
     }
 
-    // 🔹 Map price symbols → Yelp price levels and build a price query
-    const sym2lvl = { "$": 1, "$$": 2, "$$$": 3, "$$$$": 4 };
-
     const limit = Math.max(1, Math.min(Number(maxCards) || 6, 12));
     const radius = Math.min(Math.max(Number(radiusMeters) || 6000, 500), 40000);
 
     let businesses = [];
 
-    // 🔹 Build Yelp price param if client asked for it
-    let yelpPrice = undefined;
-    if (Array.isArray(priceTiers) && priceTiers.length) {
-      yelpPrice = priceTiers.map((s) => sym2lvl[s]).filter(Boolean).join(",");
-    } else if (minPriceLevel || maxPriceLevel) {
-      const lo = Math.max(1, minPriceLevel || 1);
-      const hi = Math.min(4, maxPriceLevel || 4);
-      yelpPrice = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i).join(",");
-    }
-
     // 1) Try AI Chat
-    if (String(process.env.YELP_USE_AI || "false").toLowerCase() === "true") {
+    if (String(process.env.YELP_USE_AI || "true").toLowerCase() === "true") {
       try {
         const { data } = await AI.post("", {
           query: prompt,
@@ -211,29 +192,10 @@ app.post("/generate-trips", async (req, res) => {
         sort_by: "best_match",
         open_now: "false",
       });
-
-      // 🔹 Pass Yelp price filter when present
-      if (yelpPrice) params.set("price", yelpPrice);
-
       const { data } = await FUSION.get(
         `/businesses/search?${params.toString()}`
       );
       businesses = data?.businesses || [];
-    }
-
-    // 🔹 Enforce min/max price filter even if AI route returned items
-    const withinClientPrice = (biz) => {
-      const level = (biz?.price || "").length || null;
-      if (minPriceLevel && level && level < minPriceLevel) return false;
-      if (maxPriceLevel && level && level > maxPriceLevel) return false;
-      if (Array.isArray(priceTiers) && priceTiers.length) {
-        const ok = priceTiers.includes(biz?.price || "");
-        if (!ok) return false;
-      }
-      return true;
-    };
-    if (businesses?.length && (yelpPrice || minPriceLevel || maxPriceLevel || (priceTiers && priceTiers.length))) {
-      businesses = businesses.filter(withinClientPrice);
     }
 
     // 3) Ensure we can compute distance -> ETA for each business
@@ -277,13 +239,6 @@ app.post("/generate-trips", async (req, res) => {
             e.dMeters = haversineMeters(lat, lng, c.latitude, c.longitude);
           }
         }
-        // fill missing price & image from details
-       if (e.raw?.id) {
-         const det = byId.get(e.raw.id);
-         if (det?.price && !e.raw.price) e.raw.price = det.price;
-         // prefer details’ image if search one is missing
-         if (det?.image_url && !e.raw.image_url) e.raw.image_url = det.image_url;
-       }
       });
     }
 
@@ -296,9 +251,7 @@ app.post("/generate-trips", async (req, res) => {
           : undefined;
         return { raw: e.raw, dMeters: d, minutes };
       })
-      .filter((x) => Number.isFinite(x.minutes) && x.minutes <= maxMinutes)
-      // 🔹 Also keep enforcing price filter here just in case
-      .filter((x) => withinClientPrice(x.raw));
+      .filter((x) => Number.isFinite(x.minutes) && x.minutes <= maxMinutes);
 
     // 5) Sort: closest ETA first, then rating desc, then reviews desc
     filtered.sort((a, b) => {
