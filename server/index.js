@@ -5,9 +5,7 @@ const cors = require("cors");
 const axios = require("axios");
 
 
-const AI = axios.create({
-  baseURL: `${process.env.EXPO_PUBLIC_API_URL}/generate-trips`,
-});
+const AI = axios.create();
 
 // --- Distance / ETA helpers ---
 function haversineMeters(lat1, lon1, lat2, lon2) {
@@ -183,7 +181,7 @@ app.post("/generate-trips", async (req, res) => {
     }
 
     // 1) Try AI Chat
-    if (String(process.env.YELP_USE_AI || "true").toLowerCase() === "true") {
+    if (String(process.env.YELP_USE_AI || "false").toLowerCase() === "true") {
       try {
         const { data } = await AI.post("", {
           query: prompt,
