@@ -237,6 +237,30 @@ export default function Discover() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // Derived: filter results by price or distance based on active chips
+const filteredCards = useMemo(() => {
+  if (!aiCards.length) return [];
+
+  return aiCards.filter(card => {
+    // Get price level (count of "$" or default)
+    const priceLevel = (card.priceLabel || "").length || 0;
+    const withinDistance = (card.distanceMinutes ?? 999) <= 20; // only <= 20min
+
+    // Example: simple chip-based filters
+    const wantsCheap = selectedCats.includes("food");
+    const wantsMid = selectedCats.includes("games");
+    const wantsExpensive = selectedCats.includes("culture");
+
+    if (wantsCheap && priceLevel > 1) return false;
+    if (wantsMid && (priceLevel < 2 || priceLevel > 3)) return false;
+    if (wantsExpensive && priceLevel < 3) return false;
+
+    return withinDistance;
+  });
+}, [aiCards, selectedCats]);
+
+
+
   // Location
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
     null
@@ -371,15 +395,7 @@ export default function Discover() {
   };
 
   // Auto-refresh when toggling presets/categories (debounced)
-  useEffect(() => {
-    if (!coords) return;
-    const t = setTimeout(
-      () => fetchFromYelp({ lat: coords.lat, lng: coords.lng }),
-      350
-    );
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presets, selectedCats]);
+ 
 
   // Scroll/Aurora
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -548,50 +564,6 @@ export default function Discover() {
                   )}
                 </View>
               </BlurView>
-              {/* Simple Filters */}
-<View
-  style={{
-    flexDirection: "row",
-    marginTop: 16,
-    justifyContent: "space-between",
-    paddingHorizontal: 4,
-  }}
->
-  {/* Location Filter */}
-  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-    {["Near me", "Downtown", "Custom"].map((loc, i) => (
-      <Chip
-        key={loc}
-        label={loc}
-        color={[P.p1, P.p2, P.p3][i % 3]}
-        active={locLabel === loc}
-        onPress={() => setLocLabel(loc)}
-        mr={10}
-      />
-    ))}
-  </ScrollView>
-
-  {/* Price Filter */}
-  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-    {["$", "$$", "$$$", "$$$$"].map((tier, i) => (
-      <Chip
-        key={tier}
-        label={tier}
-        color={P.p4}
-        active={priceTiers.includes(tier as "$" | "$$" | "$$$" | "$$$$")}
-        onPress={() =>
-          setPriceTiers((prev) =>
-            prev.includes(tier as "$" | "$$" | "$$$" | "$$$$")
-              ? prev.filter((p) => p !== tier)
-              : [...prev, tier as "$" | "$$" | "$$$" | "$$$$"]
-          )
-        }
-        mr={8}
-      />
-    ))}
-  </ScrollView>
-</View>
-
 
               <TouchableOpacity
                 onPress={runAI}
@@ -632,24 +604,136 @@ export default function Discover() {
               </View>
             )}
 
-            
-          
+            {/* Presets */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginTop: 16 }}
+              contentContainerStyle={{ paddingRight: 24, alignItems: "center" }}
+            >
+              {[
+                "Retro night",
+                "Mystery picnic",
+                "Sports day",
+                "Karaoke",
+                "Board games",
+              ].map((label, i) => (
+                <Chip
+                  key={label}
+                  label={label}
+                  color={[P.p2, P.p1, P.p4, P.p3, P.p2][i % 5]}
+                  active={presets.includes(label)}
+                  onPress={() =>
+                    setPresets((prev) =>
+                      prev.includes(label)
+                        ? prev.filter((x) => x !== label)
+                        : [...prev, label]
+                    )
+                  }
+                />
+              ))}
+            </ScrollView>
           </View>
         </Animated.View>
 
         {/* Categories */}
-        {/*Add later */}
-      
+        <View
+          style={{ width: containerW, paddingHorizontal: 20, marginTop: 18 }}
+        >
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingRight: 24 }}
+          >
+            {categories.map((c, i) => {
+              const on = selectedCats.includes(c.key);
+              const col = [P.p1, P.p2, P.p3, P.p4, P.p1][i % 5];
+              return (
+                <TouchableOpacity
+                  key={c.key}
+                  onPress={() =>
+                    setSelectedCats((prev) =>
+                      prev.includes(c.key)
+                        ? prev.filter((k) => k !== c.key)
+                        : [...prev, c.key]
+                    )
+                  }
+                  activeOpacity={0.9}
+                  style={{
+                    width: 172,
+                    height: 98,
+                    borderRadius: 18,
+                    overflow: "hidden",
+                    marginRight: i === categories.length - 1 ? 0 : 12,
+                    borderWidth: 1,
+                    borderColor: on ? `${col}AA` : P.glassBorder,
+                    backgroundColor: P.bg2,
+                  }}
+                >
+                  <ImageBackground source={{ uri: c.img }} style={{ flex: 1 }}>
+                    <LinearGradient
+                      colors={[`${col}66`, "transparent"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: 6,
+                      }}
+                    />
+                    <LinearGradient
+                      colors={[
+                        "rgba(0,0,0,0)",
+                        on ? `${col}22` : "rgba(0,0,0,0.85)",
+                      ]}
+                      start={{ x: 0.5, y: 0 }}
+                      end={{ x: 0.5, y: 1 }}
+                      style={{
+                        position: "absolute",
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: 72,
+                      }}
+                    />
+                    <View
+                      style={{
+                        position: "absolute",
+                        bottom: 10,
+                        left: 10,
+                        right: 10,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: "#F8FAFF",
+                          fontFamily: fontHeavy,
+                          fontSize: 13,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {c.label}
+                      </Text>
+                    </View>
+                  </ImageBackground>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
         {/* AI results */}
         <View
-          style={{ width: containerW, paddingHorizontal: 20, marginTop: 30 }}
+          style={{ width: containerW, paddingHorizontal: 20, marginTop: 22 }}
         >
           {aiLoading && aiCards.length === 0 ? (
             <View style={{ paddingVertical: 40, alignItems: "center" }}>
               <ActivityIndicator />
             </View>
-          ) : aiCards.length > 0 ? (
-            aiCards.map((item, i) => {
+          ) : filteredCards.length > 0 ? (
+            filteredCards.map((item, i) => {
               // Map Yelp AICard -> InteractiveCard shape
               const s = {
                 id: item.id,
