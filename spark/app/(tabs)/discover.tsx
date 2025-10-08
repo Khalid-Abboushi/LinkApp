@@ -238,26 +238,42 @@ export default function Discover() {
   const [aiError, setAiError] = useState<string | null>(null);
 
   // Derived: filter results by price or distance based on active chips
+// Derived: filter locally by price & distance based on active categories
 const filteredCards = useMemo(() => {
   if (!aiCards.length) return [];
 
-  return aiCards.filter(card => {
-    // Get price level (count of "$" or default)
+  return aiCards.filter((card) => {
     const priceLevel = (card.priceLabel || "").length || 0;
-    const withinDistance = (card.distanceMinutes ?? 999) <= 20; // only <= 20min
+    const minutes = card.distanceMinutes ?? 999;
 
-    // Example: simple chip-based filters
-    const wantsCheap = selectedCats.includes("food");
-    const wantsMid = selectedCats.includes("games");
-    const wantsExpensive = selectedCats.includes("culture");
+    let pass = true;
 
-    if (wantsCheap && priceLevel > 1) return false;
-    if (wantsMid && (priceLevel < 2 || priceLevel > 3)) return false;
-    if (wantsExpensive && priceLevel < 3) return false;
+    // --- Filter by price category ---
+    if (selectedCats.includes("food")) {
+      // budget-friendly
+      pass = pass && priceLevel <= 2;
+    }
+    if (selectedCats.includes("games")) {
+      // midrange
+      pass = pass && priceLevel >= 2 && priceLevel <= 3;
+    }
+    if (selectedCats.includes("culture")) {
+      // luxury / high-end
+      pass = pass && priceLevel >= 3;
+    }
 
-    return withinDistance;
+    // --- Filter by proximity ---
+    if (selectedCats.includes("outdoor")) {
+      pass = pass && minutes <= 10;
+    }
+    if (selectedCats.includes("music")) {
+      pass = pass && minutes <= 20;
+    }
+
+    return pass;
   });
 }, [aiCards, selectedCats]);
+
 
 
 
