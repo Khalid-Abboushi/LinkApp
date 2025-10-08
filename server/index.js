@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
-console.log("🧭 YELP_USE_AI =", process.env.YELP_USE_AI);
 
 // --- Distance / ETA helpers ---
 function haversineMeters(lat1, lon1, lat2, lon2) {
