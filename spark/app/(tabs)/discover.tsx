@@ -118,45 +118,13 @@ const MAX_W = 860;
    CATEGORIES & PRESETS
    ========================= */
 const categories = [
-  {
-    key: "food",
-    label: "Food & Drinks",
-    img: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=1200&auto=format&fit=crop",
-    match: [
-      "restaurant",
-      "food",
-      "drink",
-      "cafe",
-      "pizza",
-      "dessert",
-      "brunch",
-    ],
-  },
-  {
-    key: "games",
-    label: "Games",
-    img: "https://images.unsplash.com/photo-1511512578047-dfb367046420?q=80&w=1200&auto=format&fit=crop",
-    match: ["arcade", "barcade", "bowling", "board games", "escape room"],
-  },
-  {
-    key: "outdoor",
-    label: "Outdoors",
-    img: "https://images.unsplash.com/photo-1501785888041-af3ef285b470?q=80&w=1200&auto=format&fit=crop",
-    match: ["park", "trail", "hike", "picnic", "outdoor"],
-  },
-  {
-    key: "music",
-    label: "Music",
-    img: "https://images.unsplash.com/photo-1506157786151-b8491531f063?q=80&w=1200&auto=format&fit=crop",
-    match: ["live music", "concert", "karaoke", "dj"],
-  },
-  {
-    key: "culture",
-    label: "Culture",
-    img: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?q=80&w=1200&auto=format&fit=crop",
-    match: ["museum", "art", "gallery", "exhibit", "culture"],
-  },
+  { name: "Budget Eats", key: "budget", image: require("https://media.istockphoto.com/id/2161464162/photo/fast-food-restaurant-top-view.webp?a=1&b=1&s=612x612&w=0&k=20&c=CjY9beqKRtiCYijYVZyH9fnN9TK4wiqED5mjFQxv4Y8=") },
+  { name: "Midrange Spots", key: "midrange", image: require("https://images.unsplash.com/photo-1555244162-803834f70033?w=600&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Mnx8YnVmZmV0fGVufDB8fDB8fHww") },
+  { name: "Fine Dining", key: "fine", image: require("https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Mnx8ZmluZSUyMGRpbmluZ3xlbnwwfHwwfHx8MA%3D%3D") },
+  { name: "Walkable Nearby", key: "walk", image: require("https://images.unsplash.com/photo-1487956382158-bb926046304a?w=600&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Mnx8d2Fsa2luZ3xlbnwwfHwwfHx8MA%3D%3D") },
+  { name: "Short Drive", key: "drive", image: require("https://images.unsplash.com/photo-1515086828834-023d61380316?w=600&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Mnx8ZHJpdmV8ZW58MHx8MHx8fDA%3D") },
 ];
+
 
 const presetKeywords: Record<string, string[]> = {
   "Retro night": ["retro arcade", "barcade", "pinball"],
@@ -239,6 +207,7 @@ export default function Discover() {
 
   // Derived: filter results by price or distance based on active chips
 // Derived: filter locally by price & distance based on active categories
+// Derived: filter locally by price & distance based on active categories
 const filteredCards = useMemo(() => {
   if (!aiCards.length) return [];
 
@@ -248,25 +217,19 @@ const filteredCards = useMemo(() => {
 
     let pass = true;
 
-    // --- Filter by price category ---
-    if (selectedCats.includes("food")) {
-      // budget-friendly
+    if (selectedCats.includes("budget")) {
       pass = pass && priceLevel <= 2;
     }
-    if (selectedCats.includes("games")) {
-      // midrange
+    if (selectedCats.includes("midrange")) {
       pass = pass && priceLevel >= 2 && priceLevel <= 3;
     }
-    if (selectedCats.includes("culture")) {
-      // luxury / high-end
+    if (selectedCats.includes("fine")) {
       pass = pass && priceLevel >= 3;
     }
-
-    // --- Filter by proximity ---
-    if (selectedCats.includes("outdoor")) {
+    if (selectedCats.includes("walk")) {
       pass = pass && minutes <= 10;
     }
-    if (selectedCats.includes("music")) {
+    if (selectedCats.includes("drive")) {
       pass = pass && minutes <= 20;
     }
 
