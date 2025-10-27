@@ -33,6 +33,7 @@ type Mode = "signin" | "signup" | "forgot";
 // background assets
 const heroDesktop = require("@/assets/images/spark-hero-desktop.png");
 const heroMobile = require("@/assets/images/spark-hero-mobile.png");
+const heroLogo = require("@/assets/images/rawNoBG.png");
 
 const LOC_ONBOARD_KEY = "loc_prompt_v1";
 
@@ -186,7 +187,7 @@ export default function AuthScreen() {
   }, [mode]);
 
   const title = useMemo(
-    () => (mode === "signin" ? "Welcome back" : mode === "signup" ? "Create your account" : "Reset your password"),
+    () => (mode === "signin" ? "Welcome" : mode === "signup" ? "Create your account" : "Reset your password"),
     [mode]
   );
 
@@ -291,9 +292,10 @@ export default function AuthScreen() {
       <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.38)" }} />
 
       <SafeAreaView style={{ flex: 1 }}>
-        <View style={{ paddingHorizontal: PADDING, paddingTop: isMobile ? 8 : 16, paddingBottom: 8 }}>
-          <Text style={{ color: "#fff", fontSize: isMobile ? 26 : 30, fontWeight: "800", letterSpacing: 0.5 }}>Spark</Text>
+        <View style={{ paddingHorizontal: PADDING, paddingTop: isMobile ? 8 : 16, paddingBottom: 8,  alignItems: "center"}}>
+          <Text style={{ color: "#fff", fontSize: isMobile ? 26 : 30, fontWeight: "800", letterSpacing: 0.5 }}>LinkApp</Text>
           <Text style={{ color: "rgba(255,255,255,0.75)", marginTop: 2 }}>Sign in to continue</Text>
+          <Image source={heroLogo} style={{ position: "absolute", width: 150, height: 150, marginTop: 35}} resizeMode="contain" />
         </View>
 
         {/* Keyboard-safe, scrollable form */}
@@ -327,7 +329,7 @@ export default function AuthScreen() {
                     ? "Pick a unique username — this is public and others will see it."
                     : mode === "forgot"
                     ? "Enter your account email and we'll send a reset link."
-                    : "Use your email and password."}
+                    : ""}
                 </Text>
 
                 {!!errors.global && (
