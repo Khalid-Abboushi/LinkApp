@@ -20,10 +20,8 @@ import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import InteractiveCard from "@/components/ui/interactiveCard";
-
 import { generateAICards, type AICard } from "../../lib/ai";
-// Location
-const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+
 /* =========================
    UTIL — image normalization + prefetch
    ========================= */
@@ -113,22 +111,14 @@ const PALETTES: Palette[] = [
 const MAX_W = 860;
 
 /* =========================
-   CATEGORIES & PRESETS
+   CATEGORIES
    ========================= */
 const categories = [
   {
     key: "food",
     label: "Food & Drinks",
     img: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=1200&auto=format&fit=crop",
-    match: [
-      "restaurant",
-      "food",
-      "drink",
-      "cafe",
-      "pizza",
-      "dessert",
-      "brunch",
-    ],
+    match: ["restaurant", "food", "drink", "cafe", "pizza", "dessert", "brunch"],
   },
   {
     key: "games",
@@ -156,13 +146,16 @@ const categories = [
   },
 ];
 
-const presetKeywords: Record<string, string[]> = {
-  "Retro night": ["retro arcade", "barcade", "pinball"],
-  "Mystery picnic": ["scavenger", "walking tour", "picnic"],
-  "Sports day": ["bowling", "climbing gym", "indoor karting"],
-  Karaoke: ["karaoke"],
-  "Board games": ["board game cafe"],
-};
+/* =========================
+   PRESETS — (DISABLED VIA COMMENTS)
+   ========================= */
+// const presetKeywords: Record<string, string[]> = {
+//   "Retro night": ["retro arcade", "barcade", "pinball"],
+//   "Mystery picnic": ["scavenger", "walking tour", "picnic"],
+//   "Sports day": ["bowling", "climbing gym", "indoor karting"],
+//   Karaoke: ["karaoke"],
+//   "Board games": ["board game cafe"],
+// };
 
 /* =========================
    UI PRIMS
@@ -225,7 +218,7 @@ export default function Discover() {
   const P = PALETTES[palIdx % PALETTES.length];
 
   const [query, setQuery] = useState("");
-  const [presets, setPresets] = useState<string[]>([]);
+  // const [presets, setPresets] = useState<string[]>([]); // ← disabled
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [preview, setPreview] = useState<any | null>(null);
@@ -236,9 +229,7 @@ export default function Discover() {
   const [aiError, setAiError] = useState<string | null>(null);
 
   // Location
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
-    null
-  );
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [locLabel, setLocLabel] = useState("Near you");
 
   // On mount: ask location + load “popular near me”
@@ -246,14 +237,22 @@ export default function Discover() {
     (async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") { setLocLabel("Location off"); return; }
-        const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const { latitude:lat, longitude:lng } = p.coords;
+        if (status !== "granted") {
+          setLocLabel("Location off");
+          return;
+        }
+        const p = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        const { latitude: lat, longitude: lng } = p.coords;
         setCoords({ lat, lng });
 
         // nicer chip
         try {
-          const [place] = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+          const [place] = await Location.reverseGeocodeAsync({
+            latitude: lat,
+            longitude: lng,
+          });
           if (place?.city) setLocLabel(`${place.city} • Popular`);
         } catch {}
 
@@ -265,13 +264,13 @@ export default function Discover() {
     })();
   }, []);
 
-  // Build a Yelp query from search + presets + categories
+  // Build a Yelp query from search + categories (presets disabled)
   function buildPrompt() {
     const terms: string[] = [];
     const q = query.trim();
     if (q) terms.push(q);
 
-    presets.forEach((p) => terms.push(...(presetKeywords[p] || [])));
+    // presets.forEach((p) => terms.push(...(presetKeywords[p] || []))); // ← disabled
     selectedCats.forEach((k) => {
       const c = categories.find((x) => x.key === k);
       if (c) terms.push(...c.match.map((s) => s.toLowerCase()));
@@ -280,7 +279,9 @@ export default function Discover() {
     if (!terms.length) return "popular restaurants bars fun";
     return Array.from(new Set(terms.map((t) => t.toLowerCase()))).join(", ");
   }
+
   const abortRef = useRef<AbortController | null>(null);
+
   // Core Yelp fetch
   async function fetchFromYelp(opts: {
     lat: number;
@@ -288,7 +289,6 @@ export default function Discover() {
     prompt?: string;
     maxCards?: number;
   }) {
-    // keep current results on screen; just show spinner
     setAiError(null);
     setAiLoading(true);
 
@@ -299,9 +299,9 @@ export default function Discover() {
 
     try {
       if (!coords) {
-  setAiError("Location required");
-  return;
-}
+        setAiError("Location required");
+        return;
+      }
       const raw = await generateAICards({
         prompt: buildPrompt(),
         lat: coords.lat,
@@ -312,7 +312,7 @@ export default function Discover() {
         minRating: 3.5,
         radiusMeters: 20000,
         currency: "CAD",
-        signal: controller.signal, // if you're using AbortController
+        signal: controller.signal,
       });
 
       // Normalize + prepare prefetch (don’t await so UI updates faster)
@@ -320,7 +320,6 @@ export default function Discover() {
         const img = normalizeImage(c.imageUrl);
         return { ...c, imageUrl: img, _seq: i };
       });
-      // fire-and-forget prefetch to avoid blocking render
       prefetchImages(normalized.map((n: any) => n.imageUrl)).catch(() => {});
 
       // Sort: rating desc → reviews desc → original order
@@ -348,12 +347,10 @@ export default function Discover() {
 
       setAiCards(withUid.slice(0, 6));
     } catch (e: any) {
-      // Swallow aborts quietly
       if (e?.name === "AbortError" || e?.message === "Aborted") return;
       setAiError(e?.message ?? "Something went wrong");
       setAiCards([]);
     } finally {
-      // Only clear loading if this request wasn't aborted
       if (!controller.signal.aborted) setAiLoading(false);
     }
   }
@@ -368,16 +365,13 @@ export default function Discover() {
     await fetchFromYelp({ lat: coords.lat, lng: coords.lng });
   };
 
-  // Auto-refresh when toggling presets/categories (debounced)
+  // Auto-refresh when toggling categories (presets removed from deps)
   useEffect(() => {
     if (!coords) return;
-    const t = setTimeout(
-      () => fetchFromYelp({ lat: coords.lat, lng: coords.lng }),
-      350
-    );
+    const t = setTimeout(() => fetchFromYelp({ lat: coords.lat, lng: coords.lng }), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presets, selectedCats]);
+  }, [selectedCats]);
 
   // Scroll/Aurora
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -409,10 +403,9 @@ export default function Discover() {
             tintColor={P.text}
           />
         }
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true }
-        )}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+          useNativeDriver: true,
+        })}
         scrollEventThrottle={16}
         contentContainerStyle={{ alignItems: "center", paddingBottom: 140 }}
       >
@@ -463,23 +456,14 @@ export default function Discover() {
                   backgroundColor: P.glass,
                 }}
               >
-                <Text
-                  style={{ color: P.text, fontFamily: fontSans, fontSize: 12 }}
-                >
+                <Text style={{ color: P.text, fontFamily: fontSans, fontSize: 12 }}>
                   {PALETTES[(palIdx + 1) % PALETTES.length].name}
                 </Text>
               </TouchableOpacity>
             </View>
 
             {/* Context chip */}
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginTop: 10,
-                gap: 10,
-              }}
-            >
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10, gap: 10 }}>
               <View
                 style={{
                   paddingHorizontal: 10,
@@ -490,25 +474,13 @@ export default function Discover() {
                   borderColor: P.glassBorder,
                 }}
               >
-                <Text
-                  style={{
-                    color: P.textMuted,
-                    fontSize: 12,
-                    fontFamily: fontSans,
-                  }}
-                >
-                  {locLabel}
-                </Text>
+                <Text style={{ color: P.textMuted, fontSize: 12, fontFamily: fontSans }}>{locLabel}</Text>
               </View>
             </View>
 
             {/* Search + Suggest */}
             <View style={{ flexDirection: "row", gap: 8, marginTop: 18 }}>
-              <BlurView
-                intensity={40}
-                tint="dark"
-                style={{ flex: 1, borderRadius: 16, overflow: "hidden" }}
-              >
+              <BlurView intensity={40} tint="dark" style={{ flex: 1, borderRadius: 16, overflow: "hidden" }}>
                 <View
                   style={{
                     borderRadius: 16,
@@ -527,20 +499,12 @@ export default function Discover() {
                     onChangeText={setQuery}
                     placeholder="What are you in the mood for?"
                     placeholderTextColor={P.textMuted}
-                    style={{
-                      color: P.text,
-                      fontSize: 15,
-                      flex: 1,
-                      fontFamily: fontSans,
-                    }}
+                    style={{ color: P.text, fontSize: 15, flex: 1, fontFamily: fontSans }}
                     returnKeyType="search"
                     onSubmitEditing={runAI}
                   />
                   {!!query?.length && (
-                    <TouchableOpacity
-                      onPress={() => setQuery("")}
-                      style={{ padding: 6 }}
-                    >
+                    <TouchableOpacity onPress={() => setQuery("")} style={{ padding: 6 }}>
                       <Ionicons name="close" size={16} color={P.textMuted} />
                     </TouchableOpacity>
                   )}
@@ -564,9 +528,7 @@ export default function Discover() {
                 {aiLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={{ color: "#fff", fontFamily: fontHeavy }}>
-                    Suggest
-                  </Text>
+                  <Text style={{ color: "#fff", fontFamily: fontHeavy }}>Suggest</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -582,24 +544,19 @@ export default function Discover() {
                   backgroundColor: "rgba(255,77,79,0.18)",
                 }}
               >
-                <Text style={{ color: "#ff4d4f" }}>{aiError}</Text>
+                <Text style={{ color: "#ff4d4f" }}>{"Something went wrong, try again later"}</Text>
               </View>
             )}
 
-            {/* Presets */}
+            {/* Presets UI — DISABLED */}
+            {/*
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               style={{ marginTop: 16 }}
               contentContainerStyle={{ paddingRight: 24, alignItems: "center" }}
             >
-              {[
-                "Retro night",
-                "Mystery picnic",
-                "Sports day",
-                "Karaoke",
-                "Board games",
-              ].map((label, i) => (
+              {["Retro night", "Mystery picnic", "Sports day", "Karaoke", "Board games"].map((label, i) => (
                 <Chip
                   key={label}
                   label={label}
@@ -607,21 +564,18 @@ export default function Discover() {
                   active={presets.includes(label)}
                   onPress={() =>
                     setPresets((prev) =>
-                      prev.includes(label)
-                        ? prev.filter((x) => x !== label)
-                        : [...prev, label]
+                      prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]
                     )
                   }
                 />
               ))}
             </ScrollView>
+            */}
           </View>
         </Animated.View>
 
         {/* Categories */}
-        <View
-          style={{ width: containerW, paddingHorizontal: 20, marginTop: 18 }}
-        >
+        <View style={{ width: containerW, paddingHorizontal: 20, marginTop: 18 }}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -635,9 +589,7 @@ export default function Discover() {
                   key={c.key}
                   onPress={() =>
                     setSelectedCats((prev) =>
-                      prev.includes(c.key)
-                        ? prev.filter((k) => k !== c.key)
-                        : [...prev, c.key]
+                      prev.includes(c.key) ? prev.filter((k) => k !== c.key) : [...prev, c.key]
                     )
                   }
                   activeOpacity={0.9}
@@ -657,45 +609,16 @@ export default function Discover() {
                       colors={[`${col}66`, "transparent"]}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 0 }}
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        height: 6,
-                      }}
+                      style={{ position: "absolute", top: 0, left: 0, right: 0, height: 6 }}
                     />
                     <LinearGradient
-                      colors={[
-                        "rgba(0,0,0,0)",
-                        on ? `${col}22` : "rgba(0,0,0,0.85)",
-                      ]}
+                      colors={["rgba(0,0,0,0)", on ? `${col}22` : "rgba(0,0,0,0.85)"]}
                       start={{ x: 0.5, y: 0 }}
                       end={{ x: 0.5, y: 1 }}
-                      style={{
-                        position: "absolute",
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: 72,
-                      }}
+                      style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 72 }}
                     />
-                    <View
-                      style={{
-                        position: "absolute",
-                        bottom: 10,
-                        left: 10,
-                        right: 10,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: "#F8FAFF",
-                          fontFamily: fontHeavy,
-                          fontSize: 13,
-                        }}
-                        numberOfLines={1}
-                      >
+                    <View style={{ position: "absolute", bottom: 10, left: 10, right: 10 }}>
+                      <Text style={{ color: "#F8FAFF", fontFamily: fontHeavy, fontSize: 13 }} numberOfLines={1}>
                         {c.label}
                       </Text>
                     </View>
@@ -707,9 +630,7 @@ export default function Discover() {
         </View>
 
         {/* AI results */}
-        <View
-          style={{ width: containerW, paddingHorizontal: 20, marginTop: 22 }}
-        >
+        <View style={{ width: containerW, paddingHorizontal: 20, marginTop: 22 }}>
           {aiLoading && aiCards.length === 0 ? (
             <View style={{ paddingVertical: 40, alignItems: "center" }}>
               <ActivityIndicator />
@@ -720,19 +641,14 @@ export default function Discover() {
               const s = {
                 id: item.id,
                 title: item.title,
-                desc:
-                  item.description ||
-                  item.includes?.slice(0, 3).join(" • ") ||
-                  "",
-                minutes: item.distanceMinutes ?? 120, // <-- use the real ETA
+                desc: item.description || item.includes?.slice(0, 3).join(" • ") || "",
+                minutes: item.distanceMinutes ?? 120,
                 group: "2–6",
                 location: item.placeName || "Nearby",
                 tags: [
                   ...(item.tags || []),
                   item.priceLabel || "",
-                  typeof item.rating === "number"
-                    ? `${item.rating.toFixed(1)}★ (${item.reviewCount ?? 0})`
-                    : "",
+                  typeof item.rating === "number" ? `${item.rating.toFixed(1)}★ (${item.reviewCount ?? 0})` : "",
                   item.distanceText || "",
                 ].filter(Boolean),
                 hero: item.imageUrl,
@@ -748,9 +664,7 @@ export default function Discover() {
                   P={P}
                   idx={i}
                   saved={!!saved[item.uid]}
-                  onSave={() =>
-                    setSaved((p) => ({ ...p, [item.uid]: !p[item.uid] }))
-                  }
+                  onSave={() => setSaved((p) => ({ ...p, [item.uid]: !p[item.uid] }))}
                   onPreview={(x) => setPreview(x)}
                 />
               );
@@ -768,11 +682,7 @@ export default function Discover() {
       {/* If you have your PreviewOverlay component, render it here */}
       {preview ? (
         // @ts-ignore
-        <PreviewOverlay
-          s={preview}
-          accent={P.p2}
-          onClose={() => setPreview(null)}
-        />
+        <PreviewOverlay s={preview} accent={P.p2} onClose={() => setPreview(null)} />
       ) : null}
     </View>
   );
