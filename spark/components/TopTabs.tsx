@@ -139,7 +139,7 @@ export default function TopTabs({ value, onChange, tabs = DEFAULT_TABS, colors }
           }}
         />
 
-        {/* Active segment pill (no internal shimmer now) */}
+        {/* Active segment pill */}
         {ready && (
           <Animated.View
             pointerEvents="none"

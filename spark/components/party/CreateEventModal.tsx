@@ -13,6 +13,7 @@ import {
   Image,
   Keyboard,
   TextInputProps,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -122,6 +123,26 @@ export type InitialEvent = {
 };
 
 /* =========================
+   Geocoding helper (Geoapify)
+   ========================= */
+async function geocodeAddress(address: string, apiKey: string) {
+  const url = `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(
+    address
+  )}&limit=1&apiKey=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Geocode failed: ${res.status}`);
+  const data = await res.json();
+  const f = data?.features?.[0];
+  if (!f) throw new Error("No geocode results");
+  const [lng, lat] = f.geometry?.coordinates ?? [];
+  const label =
+    f.properties?.formatted ||
+    f.properties?.address_line1 ||
+    address;
+  return { lat: Number(lat), lng: Number(lng), label };
+}
+
+/* =========================
    Component
    ========================= */
 export default function CreateEventModal({
@@ -169,6 +190,7 @@ export default function CreateEventModal({
   const [dress, setDress] = useState<number>(2);
 
   const [submitting, setSubmitting] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
 
   /* ====== Prefill: run once per open/target ====== */
   const editKey = editing?.id ?? initialEvent?.id ?? null;
@@ -265,21 +287,48 @@ export default function CreateEventModal({
       return;
     }
     setSubmitting(true);
+    setGeocoding(true);
     try {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const uid = user?.id;
       if (!uid) {
         alert("Sign in required.");
         return;
       }
 
       const uploaded = await uploadIfNeeded();
+
+      // Geocode the address (best-effort)
+      let location_lat: number | null = null;
+      let location_lng: number | null = null;
+      let normalizedLocationName = locationName.trim() || null;
+
+      try {
+        const apiKey = process.env.EXPO_PUBLIC_GEOAPIFY_KEY;
+        if (!apiKey) {
+          console.warn("Missing EXPO_PUBLIC_GEOAPIFY_KEY; saving without lat/lng.");
+        } else if (address.trim()) {
+          const gc = await geocodeAddress(address.trim(), apiKey);
+          location_lat = gc.lat;
+          location_lng = gc.lng;
+          if (!normalizedLocationName) normalizedLocationName = gc.label;
+        }
+      } catch (e) {
+        console.warn("Geocoding failed; saving without lat/lng:", e);
+      } finally {
+        setGeocoding(false);
+      }
+
       const payload: any = {
         party_id: partyId,
         name: name.trim(),
         description: description.trim(),
-        location_name: locationName.trim() || null,
+        location_name: normalizedLocationName,
         location_address: address.trim(),
+        location_lat,
+        location_lng,
         cost_amount: Number(cost),
         currency,
         cost_mode: "per_person",
@@ -313,6 +362,7 @@ export default function CreateEventModal({
       alert(e?.message ?? "Failed to save.");
     } finally {
       setSubmitting(false);
+      setGeocoding(false);
     }
   };
 
@@ -511,6 +561,16 @@ export default function CreateEventModal({
                   </Text>
                 </View>
               </View>
+
+              {/* Geocoding status */}
+              {submitting && geocoding && (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 }}>
+                  <ActivityIndicator size="small" />
+                  <Text style={{ color: P.textMuted, fontFamily: fontSans }}>
+                    Geocoding address…
+                  </Text>
+                </View>
+              )}
             </ScrollView>
           </KeyboardAvoidingView>
 
@@ -550,6 +610,7 @@ export default function CreateEventModal({
                 borderWidth: 1,
                 borderColor: `${P.primary}AA`,
                 backgroundColor: `${P.primary}26`,
+                opacity: submitting ? 0.8 : 1,
               }}
             >
               <Text style={{ color: "#F6F9FF", fontFamily: fontHeavy }}>
@@ -563,9 +624,6 @@ export default function CreateEventModal({
   );
 }
 
-/* =========================
-   Optional floating CTA
-   ========================= */
 export function FloatingCreateEventCTA({
   P,
   onPress,
