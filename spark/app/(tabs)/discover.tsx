@@ -544,7 +544,7 @@ export default function Discover() {
                   backgroundColor: "rgba(255,77,79,0.18)",
                 }}
               >
-                <Text style={{ color: "#ff4d4f" }}>{"Something went wrong, try again later"}</Text>
+                <Text style={{ color: "#ff4d4f" }}>{aiError}</Text>
               </View>
             )}
 
